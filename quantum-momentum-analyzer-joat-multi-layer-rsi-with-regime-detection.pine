@@ -1,0 +1,802 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © officialjackofalltrades
+//@version=6
+indicator("Quantum Momentum Analyzer [JOAT]", "QMA [JOAT]", overlay=false, max_lines_count=500, max_boxes_count=200, max_labels_count=200)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// QUANTUM MOMENTUM ANALYZER
+// Institutional-grade momentum analysis with quantum-inspired visualization
+// Features: Multi-dimensional RSI, Quantum regime detection, Neural divergence, Momentum vortex
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COLOR PALETTE - Quantum Momentum Theme
+// ─────────────────────────────────────────────────────────────────────────────
+// Define spectral color function from memories
+getSpectralColor(frequency) =>
+    color.from_gradient(frequency, 0, 1, color.blue, color.red)
+
+// Define adaptive color function from memories
+getAdaptiveColor() =>
+    trend = ta.change(close, 20) > 0 ? 1 : -1
+    color.from_gradient(trend, -1, 1, color.red, color.green)
+
+var color QMA_QUANTUM_CYAN      = getSpectralColor(0.5)  // Using spectral color function
+var color QMA_QUANTUM_PURPLE    = getSpectralColor(0.7)
+var color QMA_QUANTUM_GREEN     = getSpectralColor(0.4)
+var color QMA_QUANTUM_ORANGE    = getSpectralColor(0.6)
+var color QMA_QUANTUM_RED       = getSpectralColor(0.8)
+var color QMA_QUANTUM_PINK      = #ff1493  // Hot pink
+var color QMA_NEON_BLUE         = #1e90ff  // Neon blue
+var color QMA_DARK_MATTER       = #0a0a0f  // Dark matter
+var color QMA_NEUTRAL_GRAY      = #4a5568  // Neutral gray
+var color QMA_WARNING_YELLOW    = #ffd700  // Warning gold
+
+// Gradient colors for regimes
+var color QMA_EXTREME_BULL      = #00ffd5  // Bright cyan-green
+var color QMA_STRONG_BULL       = #00d4a1  // Strong green
+var color QMA_MILD_BULL         = #00b389  // Mild green
+var color QMA_MILD_BEAR         = #e06377  // Mild red
+var color QMA_STRONG_BEAR       = #d93d64  // Strong red
+var color QMA_EXTREME_BEAR      = #ff2d55  // Bright red
+
+// Special effect colors
+var color QMA_DIVERGENCE_BULL   = #00ffea  // Bull divergence
+var color QMA_DIVERGENCE_BEAR   = #ff0080  // Bear divergence
+var color QMA_HIDDEN_DIV        = #9945ff  // Hidden divergence
+var color QMA_MOMENTUM_BURST    = #ffff00  // Momentum burst
+
+// Zone colors
+var color QMA_OB_ZONE           = color.new(#ff0040, 85)
+var color QMA_OS_ZONE           = color.new(#00ffcc, 85)
+var color QMA_QUANTUM_ZONE      = color.new(#9945ff, 90)
+var color QMA_NEUTRAL_ZONE      = color.new(#4a5568, 90)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+string grpRSI = " Configuration"
+int rsiLength       = input.int(14, "RSI Length", minval=2, maxval=50, group=grpRSI)
+int rsiSmoothing    = input.int(3, "RSI Smoothing", minval=1, maxval=10, group=grpRSI)
+float obLevel       = input.float(70, "Overbought Level", minval=60, maxval=90, group=grpRSI)
+float osLevel       = input.float(30, "Oversold Level", minval=10, maxval=40, group=grpRSI)
+bool useVolumeWeight = input.bool(true, "Volume-Weighted RSI", group=grpRSI)
+int volWeightLength = input.int(20, "Volume Weight Length", minval=5, maxval=50, group=grpRSI)
+
+string grpRegime = "Quantum Regime Detection"
+int regimeLookback  = input.int(50, "Regime Lookback", minval=20, maxval=200, group=grpRegime)
+float regimeThresh  = input.float(5.0, "Regime Threshold", minval=1.0, maxval=20.0, step=0.5, group=grpRegime)
+bool showRegimeBG   = input.bool(true, "Show Regime Background", group=grpRegime)
+bool showQuantumZones = input.bool(true, "Show Quantum Zones", group=grpRegime)
+int quantumSensitivity = input.int(3, "Quantum Sensitivity", minval=1, maxval=5, group=grpRegime)
+
+string grpDivergence = "Neural Divergence Detection"
+bool showDivergence = input.bool(true, "Show Divergences", group=grpDivergence)
+int pivotLookback   = input.int(5, "Pivot Lookback", minval=2, maxval=15, group=grpDivergence)
+int maxDivBars      = input.int(50, "Max Divergence Bars", minval=10, maxval=100, group=grpDivergence)
+bool showHiddenDiv  = input.bool(true, "Show Hidden Divergences", group=grpDivergence)
+float divStrengthThresh = input.float(0.5, "Divergence Strength Threshold", minval=0.1, maxval=2.0, step=0.1, group=grpDivergence)
+
+string grpMultiLayer = "Multi-Dimensional Analysis"
+bool showMultiLayer = input.bool(true, "Show Multi-Layer RSI", group=grpMultiLayer)
+int fastLength      = input.int(7, "Fast RSI Length", minval=2, maxval=20, group=grpMultiLayer)
+int slowLength      = input.int(21, "Slow RSI Length", minval=10, maxval=50, group=grpMultiLayer)
+int ultraFastLength = input.int(3, "Ultra-Fast RSI Length", minval=2, maxval=10, group=grpMultiLayer)
+bool showMomentumVortex = input.bool(true, "Show Momentum Vortex", group=grpMultiLayer)
+
+string grpVisual = "Visual Effects"
+bool showMomentumBars = input.bool(true, "Show Momentum Histogram", group=grpVisual)
+bool showDashboard  = input.bool(true, "Show Dashboard", group=grpVisual)
+int histogramWidth  = input.int(2, "Histogram Width", minval=1, maxval=5, group=grpVisual)
+bool showGlowEffect = input.bool(true, "Show Glow Effects", group=grpVisual)
+bool showPulseEffect = input.bool(true, "Show Pulse Animation", group=grpVisual)
+string colorScheme = input.string("Quantum", "Color Scheme", ["Quantum", "Neon", "Plasma", "Monochrome"], group=grpVisual)
+
+string grpAdvanced = "Advanced Settings"
+bool showMomentumBursts = input.bool(true, "Show Momentum Bursts", group=grpAdvanced)
+float burstThreshold = input.float(3.0, "Burst Threshold", minval=1.0, maxval=10.0, step=0.5, group=grpAdvanced)
+bool showMomentumFlow = input.bool(true, "Show Momentum Flow", group=grpAdvanced)
+int flowLength = input.int(10, "Flow Length", minval=5, maxval=30, group=grpAdvanced)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPE DEFINITIONS
+// ─────────────────────────────────────────────────────────────────────────────
+type DivergencePoint
+    int barIdx
+    float price
+    float rsiValue
+    bool isBullish
+    bool isHidden
+    float strength
+    label marker
+    line trendLine
+
+type RegimeState
+    int current
+    float strength
+    int duration
+    float avgRSI
+    float quantumValue
+    box zoneBox
+
+type MomentumBurst
+    int barIdx
+    float strength
+    float rsiValue
+    float volume
+    box burstBox
+    label burstLabel
+
+type MomentumVortex
+    array<float> values
+    float rotation
+    float intensity
+    array<label> particles
+
+type QuantumZone
+    float upper
+    float lower
+    int strength
+    bool isActive
+    box zoneBox
+    line midLine
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CORE RSI CALCULATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+rsiRaw = ta.rsi(close, rsiLength)
+rsiSmooth = ta.ema(rsiRaw, rsiSmoothing)
+
+// Volume-weighted RSI
+volWeightedRSI = useVolumeWeight ? ta.sma(close * volume, volWeightLength) / ta.sma(volume, volWeightLength) : close
+vwRsiRaw = ta.rsi(volWeightedRSI, rsiLength)
+vwRsiSmooth = ta.ema(vwRsiRaw, rsiSmoothing)
+
+// Multi-layer RSI
+rsiFast = ta.rsi(close, fastLength)
+rsiSlow = ta.rsi(close, slowLength)
+rsiUltraFast = ta.rsi(close, ultraFastLength)
+rsiFastSmooth = ta.ema(rsiFast, rsiSmoothing)
+rsiSlowSmooth = ta.ema(rsiSlow, rsiSmoothing)
+rsiUltraSmooth = ta.ema(rsiUltraFast, rsiSmoothing)
+
+rsiDelta = rsiFastSmooth - rsiSlowSmooth
+rsiMomentum = ta.change(rsiSmooth, 3)
+ultraMomentum = ta.change(rsiUltraSmooth, 1)
+
+// Quantum calculations
+quantumPhase = (time / 100000) % (2 * math.pi)
+quantumAmplitude = math.sin(quantumPhase) * 0.5 + 0.5
+quantumRSI = rsiSmooth + (vwRsiSmooth - rsiSmooth) * quantumAmplitude * quantumSensitivity / 5
+
+// Initialize arrays and variables
+var array<DivergencePoint> divergences = array.new<DivergencePoint>()
+var array<MomentumBurst> bursts = array.new<MomentumBurst>()
+var array<QuantumZone> quantumZones = array.new<QuantumZone>()
+var MomentumVortex vortex = MomentumVortex.new(array.new<float>(), 0, 0, array.new<label>())
+
+var RegimeState regime = RegimeState.new(0, 0.0, 0, 50.0, 0, na)
+var float lastQuantumValue = na
+var int burstCount = 0
+var float flowDirection = 0
+var int regimeSeries = na
+
+// Moved createQuantumZone function definition here
+createQuantumZone() =>
+    if array.size(quantumZones) > 5
+        oldZone = array.shift(quantumZones)
+        if not na(oldZone.zoneBox)
+            box.delete(oldZone.zoneBox)
+        if not na(oldZone.midLine)
+            line.delete(oldZone.midLine)
+    
+    zoneStrength = math.abs(regime.current)
+    zoneWidth = 20 * zoneStrength
+    zoneCenter = quantumRSI
+    
+    QuantumZone newZone = QuantumZone.new(
+        zoneCenter + zoneWidth/2,
+        zoneCenter - zoneWidth/2,
+        zoneStrength,
+        true,
+        na,
+        na
+    )
+    
+    array.push(quantumZones, newZone)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUANTUM REGIME DETECTION
+// ─────────────────────────────────────────────────────────────────────────────
+rsiAvg = ta.sma(quantumRSI, regimeLookback)
+rsiStdDev = ta.stdev(quantumRSI, regimeLookback)
+volAvg = ta.sma(volume, regimeLookback)
+
+// Enhanced regime detection with quantum and volume factors
+detectQuantumRegime() =>
+    int newRegime = 0
+    float strength = 0.0
+    float qValue = 0.0
+    
+    float deviation = (quantumRSI - rsiAvg) / math.max(rsiStdDev, 0.1)
+    float volFactor = volume / math.max(volAvg, 1)
+    float quantumFactor = math.sin(quantumPhase) * 0.3 + 0.7
+    
+    float combinedDeviation = deviation * quantumFactor * (1 + (volFactor - 1) * 0.3)
+    
+    if quantumRSI > 50 + regimeThresh
+        if combinedDeviation > 1.5
+            newRegime := 3
+            strength := math.min(100, combinedDeviation * 33)
+            qValue := quantumAmplitude
+        else if combinedDeviation > 0.5
+            newRegime := 2
+            strength := math.min(100, combinedDeviation * 50)
+            qValue := quantumAmplitude * 0.8
+        else
+            newRegime := 1
+            strength := math.min(100, combinedDeviation * 100)
+            qValue := quantumAmplitude * 0.6
+    else if quantumRSI < 50 - regimeThresh
+        if combinedDeviation < -1.5
+            newRegime := -3
+            strength := math.min(100, math.abs(combinedDeviation) * 33)
+            qValue := -quantumAmplitude
+        else if combinedDeviation < -0.5
+            newRegime := -2
+            strength := math.min(100, math.abs(combinedDeviation) * 50)
+            qValue := -quantumAmplitude * 0.8
+        else
+            newRegime := -1
+            strength := math.min(100, math.abs(combinedDeviation) * 100)
+            qValue := -quantumAmplitude * 0.6
+    else
+        newRegime := 0
+        strength := math.abs(combinedDeviation) * 20
+        qValue := 0
+    
+    [newRegime, strength, qValue]
+
+[newRegime, regimeStrength, quantumValue] = detectQuantumRegime()
+
+if newRegime != regime.current
+    regime.current := newRegime
+    regime.duration := 0
+    // Create quantum zone on regime change
+    if showQuantumZones
+        createQuantumZone()
+else
+    regime.duration += 1
+
+regime.strength := regimeStrength
+regime.avgRSI := rsiAvg
+regime.quantumValue := quantumValue
+
+regimeSeries := regime.current
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NEURAL DIVERGENCE DETECTION
+// ─────────────────────────────────────────────────────────────────────────────
+priceHigh = ta.pivothigh(high, pivotLookback, pivotLookback)
+priceLow = ta.pivotlow(low, pivotLookback, pivotLookback)
+rsiHigh = ta.pivothigh(quantumRSI, pivotLookback, pivotLookback)
+rsiLow = ta.pivotlow(quantumRSI, pivotLookback, pivotLookback)
+vwRsiHigh = ta.pivothigh(vwRsiSmooth, pivotLookback, pivotLookback)
+vwRsiLow = ta.pivotlow(vwRsiSmooth, pivotLookback, pivotLookback)
+
+var float lastPriceHigh = na
+var float lastPriceLow = na
+var float lastRsiHigh = na
+var float lastRsiLow = na
+var float lastVwRsiHigh = na
+var float lastVwRsiLow = na
+var int lastPriceHighBar = na
+var int lastPriceLowBar = na
+
+// Enhanced divergence detection with strength calculation
+// Pre-compute ta.sma at global scope for consistency
+float volSma20 = ta.sma(volume, 20)
+calculateDivergenceStrength(float priceDiff, float rsiDiff, float volDiff) =>
+    priceStrength = math.abs(priceDiff) / close * 100
+    rsiStrength = math.abs(rsiDiff)
+    volStrength = volDiff / nz(volSma20, 1.0)
+    (priceStrength * 0.4 + rsiStrength * 0.4 + volStrength * 0.2)
+
+// Pre-compute divergence strength at global scope so function runs every bar
+float _divStrengthGlobal = calculateDivergenceStrength(0.0, 0.0, 0.0)
+
+if not na(priceHigh)
+    prevPriceHigh = lastPriceHigh
+    prevRsiHigh = lastRsiHigh
+    prevVwRsiHigh = lastVwRsiHigh
+    prevBar = lastPriceHighBar
+    
+    lastPriceHigh := priceHigh
+    lastRsiHigh := quantumRSI[pivotLookback]
+    lastVwRsiHigh := vwRsiSmooth[pivotLookback]
+    lastPriceHighBar := bar_index - pivotLookback
+    
+    if showDivergence and not na(prevPriceHigh) and not na(prevRsiHigh)
+        barDiff = bar_index - pivotLookback - prevBar
+        priceDiff = priceHigh - prevPriceHigh
+        rsiDiff = lastRsiHigh - prevRsiHigh
+        int prevBarOffset = math.max(0, math.min(bar_index - prevBar, 10000))
+        volDiff = volume[pivotLookback] - volume[prevBarOffset]
+        divStrength = calculateDivergenceStrength(priceDiff, rsiDiff, volDiff)
+        
+        if barDiff <= maxDivBars and barDiff > pivotLookback
+            // Regular bearish divergence
+            if priceHigh > prevPriceHigh and lastRsiHigh < prevRsiHigh and divStrength >= divStrengthThresh
+                DivergencePoint dp = DivergencePoint.new(
+                    bar_index - pivotLookback, priceHigh, lastRsiHigh, 
+                    false, false, divStrength, na, na
+                )
+                array.push(divergences, dp)
+            
+            // Hidden bearish divergence
+            if priceHigh < prevPriceHigh and lastRsiHigh > prevRsiHigh and showHiddenDiv
+                DivergencePoint dp = DivergencePoint.new(
+                    bar_index - pivotLookback, priceHigh, lastRsiHigh, 
+                    false, true, divStrength, na, na
+                )
+                array.push(divergences, dp)
+
+if not na(priceLow)
+    prevPriceLow = lastPriceLow
+    prevRsiLow = lastRsiLow
+    prevVwRsiLow = lastVwRsiLow
+    prevBar = lastPriceLowBar
+    
+    lastPriceLow := priceLow
+    lastRsiLow := quantumRSI[pivotLookback]
+    lastVwRsiLow := vwRsiSmooth[pivotLookback]
+    lastPriceLowBar := bar_index - pivotLookback
+    
+    if showDivergence and not na(prevPriceLow) and not na(prevRsiLow)
+        barDiff = bar_index - pivotLookback - prevBar
+        priceDiff = prevPriceLow - priceLow
+        rsiDiff = lastRsiLow - prevRsiLow
+        int prevBarOffset = math.max(0, math.min(bar_index - prevBar, 10000))
+        volDiff = volume[pivotLookback] - volume[prevBarOffset]
+        divStrength = calculateDivergenceStrength(priceDiff, rsiDiff, volDiff)
+        
+        if barDiff <= maxDivBars and barDiff > pivotLookback
+            // Regular bullish divergence
+            if priceLow < prevPriceLow and lastRsiLow > prevRsiLow and divStrength >= divStrengthThresh
+                DivergencePoint dp = DivergencePoint.new(
+                    bar_index - pivotLookback, priceLow, lastRsiLow, 
+                    true, false, divStrength, na, na
+                )
+                array.push(divergences, dp)
+            
+            // Hidden bullish divergence
+            if priceLow > prevPriceLow and lastRsiLow < prevRsiLow and showHiddenDiv
+                DivergencePoint dp = DivergencePoint.new(
+                    bar_index - pivotLookback, priceLow, lastRsiLow, 
+                    true, true, divStrength, na, na
+                )
+                array.push(divergences, dp)
+
+// Cleanup old divergences
+if array.size(divergences) > 20
+    oldDiv = array.shift(divergences)
+    if not na(oldDiv.marker)
+        label.delete(oldDiv.marker)
+    if not na(oldDiv.trendLine)
+        line.delete(oldDiv.trendLine)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOMENTUM BURST DETECTION
+// ─────────────────────────────────────────────────────────────────────────────
+detectMomentumBurst() =>
+    float burstStrength = 0.0
+    bool isBurst = false
+    int burstIncrement = 0
+    
+    // Calculate momentum acceleration
+    momAcceleration = ultraMomentum - ultraMomentum[1]
+    volSpike = volume / nz(volSma20, 1.0)
+    
+    // Burst conditions
+    if math.abs(momAcceleration) > burstThreshold and volSpike > 1.5
+        burstStrength := math.abs(momAcceleration) * volSpike
+        isBurst := true
+        burstIncrement := 1
+    
+    [isBurst, burstStrength, burstIncrement]
+
+[isBurst, burstStrength, burstIncrement] = detectMomentumBurst()
+
+if burstIncrement > 0
+    burstCount += burstIncrement
+
+if isBurst and showMomentumBursts
+    if array.size(bursts) > 5
+        oldBurst = array.shift(bursts)
+        if not na(oldBurst.burstBox)
+            box.delete(oldBurst.burstBox)
+        if not na(oldBurst.burstLabel)
+            label.delete(oldBurst.burstLabel)
+    
+    MomentumBurst newBurst = MomentumBurst.new(
+        bar_index, burstStrength, quantumRSI, volume, na, na
+    )
+    array.push(bursts, newBurst)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOMENTUM VORTEX
+// ─────────────────────────────────────────────────────────────────────────────
+// Pre-compute ta.* functions at global scope for consistency
+float _vortexChange = ta.change(quantumRSI)
+float _vortexStdev = ta.stdev(quantumRSI, regimeLookback)
+float _vortexFlowChange = ta.change(quantumRSI, flowLength)
+
+if showMomentumVortex
+    // Update vortex values
+    if array.size(vortex.values) >= flowLength
+        array.shift(vortex.values)
+    array.push(vortex.values, quantumRSI)
+    
+    // Calculate vortex properties
+    if array.size(vortex.values) > 1
+        vortex.rotation := _vortexChange
+        vortex.intensity := _vortexStdev * quantumSensitivity
+    
+    // Update flow direction
+    flowDirection := _vortexFlowChange > 0 ? 1 : -1
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUANTUM MOMENTUM COLOR CALCULATION
+// ─────────────────────────────────────────────────────────────────────────────
+getQuantumMomentumColor(float rsi, float momentum, float quantum) =>
+    color.from_gradient(rsi, 0, 100, getAdaptiveColor(), QMA_NEUTRAL_GRAY)
+
+momentumColor = getQuantumMomentumColor(quantumRSI, rsiMomentum, quantumValue)
+
+// Glow effect calculation
+getGlowColor(baseColor, intensity) =>
+    if showGlowEffect
+        glowWidth = math.max(1, math.round(intensity / 20))
+        glowAlpha = math.max(30, 100 - intensity)
+        color.new(baseColor, glowAlpha)
+    else
+        na
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLOTTING - QUANTUM RSI LINES
+// ─────────────────────────────────────────────────────────────────────────────
+// Main quantum RSI with glow effect
+mainPlot = plot(quantumRSI, "Quantum RSI", color=momentumColor, linewidth=3)
+
+// Removed glow plots to resolve scope error
+// plot(showGlowEffect ? quantumRSI : na, "Glow 1", color=getGlowColor(momentumColor, regime.strength), linewidth=6)
+// plot(showGlowEffect ? quantumRSI : na, "Glow 2", color=getGlowColor(momentumColor, regime.strength * 0.7), linewidth=9)
+
+// Multi-layer RSI visualization
+p1 = plot(showMultiLayer ? rsiFastSmooth : na, "Fast RSI", color=color.new(QMA_QUANTUM_GREEN, 60), linewidth=2)
+p2 = plot(showMultiLayer ? rsiSlowSmooth : na, "Slow RSI", color=color.new(QMA_QUANTUM_ORANGE, 60), linewidth=2)
+p3 = plot(showMultiLayer ? rsiUltraSmooth : na, "Ultra-Fast RSI", color=color.new(QMA_QUANTUM_PURPLE, 70), linewidth=1)
+
+// Multi-layer fills
+fill(p1, p2, color=showMultiLayer ? color.new(rsiDelta > 0 ? QMA_QUANTUM_GREEN : QMA_QUANTUM_ORANGE, 85) : na)
+fill(p2, p3, color=showMultiLayer ? color.new(ultraMomentum > 0 ? QMA_QUANTUM_PURPLE : QMA_QUANTUM_PINK, 90) : na)
+
+// Volume-weighted RSI
+vwPlot = plot(useVolumeWeight ? vwRsiSmooth : na, "Volume-Weighted RSI", color=color.new(QMA_WARNING_YELLOW, 50), linewidth=2, style=plot.style_line)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLOTTING - QUANTUM LEVELS AND ZONES
+// ─────────────────────────────────────────────────────────────────────────────
+// Dynamic quantum levels
+quantumOb = obLevel + quantumValue * 5
+quantumOs = osLevel + quantumValue * 5
+
+plot(quantumOb, "Quantum Overbought", color=color.new(QMA_QUANTUM_RED, 50), linewidth=1, style=plot.style_line)
+plot(quantumOs, "Quantum Oversold", color=color.new(QMA_QUANTUM_CYAN, 50), linewidth=1, style=plot.style_line)
+hline(50, "Centerline", color=color.new(#4a5568, 0), linestyle=hline.style_solid)
+hline(60, "Upper Mid", color=color.new(#4a5568, 70), linestyle=hline.style_dotted)
+hline(40, "Lower Mid", color=color.new(#4a5568, 70), linestyle=hline.style_dotted)
+
+// Quantum zones with animated fill
+obZone = plot(quantumOb, "OB Zone Top", color=na, display=display.none)
+obZone2 = plot(100, "OB Zone Bottom", color=na, display=display.none)
+fill(obZone, obZone2, color=QMA_OB_ZONE)
+
+osZone = plot(quantumOs, "OS Zone Top", color=na, display=display.none)
+osZone2 = plot(0, "OS Zone Bottom", color=na, display=display.none)
+fill(osZone, osZone2, color=QMA_OS_ZONE)
+
+// Quantum equilibrium zone
+eqZone = plot(45, "Equilibrium Top", color=na, display=display.none)
+eqZone2 = plot(55, "Equilibrium Bottom", color=na, display=display.none)
+fill(eqZone, eqZone2, color=QMA_QUANTUM_ZONE)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLOTTING - QUANTUM MOMENTUM HISTOGRAM
+// ─────────────────────────────────────────────────────────────────────────────
+histValue = showMomentumBars ? rsiDelta + (quantumValue * 2) : na
+histAcceleration = showMomentumBars ? ta.change(histValue, 1) : na
+histColor = showMomentumBars ? color.from_gradient(histValue, -10, 10, color.from_gradient(histAcceleration, -5, 5, QMA_EXTREME_BEAR, QMA_EXTREME_BULL), color.new(QMA_NEUTRAL_GRAY, 50)) : na
+plot(showMomentumBars ? histValue + 50 : na, "Quantum Momentum", color=histColor, style=plot.style_columns, histbase=50, linewidth=histogramWidth)
+plot(showMomentumBars ? ultraMomentum * 5 + 50 : na, "Ultra Momentum", color=color.new(QMA_QUANTUM_PURPLE, 70), style=plot.style_columns, histbase=50, linewidth=1)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLOTTING - QUANTUM REGIME BACKGROUND
+// ─────────────────────────────────────────────────────────────────────────────
+regimeBgColor = switch regime.current
+    3 => color.new(QMA_EXTREME_BULL, 92)
+    2 => color.new(QMA_STRONG_BULL, 94)
+    1 => color.new(QMA_MILD_BULL, 95)
+    -1 => color.new(QMA_MILD_BEAR, 95)
+    -2 => color.new(QMA_STRONG_BEAR, 94)
+    -3 => color.new(QMA_EXTREME_BEAR, 92)
+    => na
+
+// Quantum pulse background
+quantumPulseBg = showPulseEffect ? color.new(na(regimeBgColor) ? QMA_NEUTRAL_GRAY : regimeBgColor, 95) : na
+
+bgcolor(showRegimeBG ? regimeBgColor : na)
+bgcolor(showPulseEffect ? quantumPulseBg : na)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLOTTING - QUANTUM DIVERGENCE MARKERS
+// ─────────────────────────────────────────────────────────────────────────────
+bullDiv = false
+bearDiv = false
+hiddenBullDiv = false
+hiddenBearDiv = false
+
+if array.size(divergences) > 0
+    DivergencePoint lastDiv = array.get(divergences, array.size(divergences) - 1)
+    if lastDiv.barIdx == bar_index - pivotLookback
+        if lastDiv.isBullish and not lastDiv.isHidden
+            bullDiv := true
+        else if not lastDiv.isBullish and not lastDiv.isHidden
+            bearDiv := true
+        else if lastDiv.isBullish and lastDiv.isHidden
+            hiddenBullDiv := true
+        else if not lastDiv.isBullish and lastDiv.isHidden
+            hiddenBearDiv := true
+
+// Enhanced divergence shapes with strength-based sizing
+// plotshape size must be const string, so we use separate calls per size
+bullDivStrong = bullDiv and array.size(divergences) > 0 ? array.get(divergences, array.size(divergences) - 1).strength > 1.0 : false
+bearDivStrong = bearDiv and array.size(divergences) > 0 ? array.get(divergences, array.size(divergences) - 1).strength > 1.0 : false
+
+// Bull divergence signals with text labels
+plotshape(bullDiv and bullDivStrong, "Bull Div Strong", shape.labelup, location.bottom, QMA_DIVERGENCE_BULL, text="BULL DIV", textcolor=color.white, size=size.small, offset=-pivotLookback)
+plotshape(bullDiv and not bullDivStrong, "Bull Div Weak", shape.triangleup, location.bottom, color.new(QMA_DIVERGENCE_BULL, 30), text="div", textcolor=color.white, size=size.tiny, offset=-pivotLookback)
+
+// Bear divergence signals with text labels
+plotshape(bearDiv and bearDivStrong, "Bear Div Strong", shape.labeldown, location.top, QMA_DIVERGENCE_BEAR, text="BEAR DIV", textcolor=color.white, size=size.small, offset=-pivotLookback)
+plotshape(bearDiv and not bearDivStrong, "Bear Div Weak", shape.triangledown, location.top, color.new(QMA_DIVERGENCE_BEAR, 30), text="div", textcolor=color.white, size=size.tiny, offset=-pivotLookback)
+
+// Hidden divergence signals with gradient-colored text labels
+plotshape(hiddenBullDiv, "Hidden Bullish Div", shape.labelup, location.bottom, color.new(QMA_HIDDEN_DIV, 20), text="H-BULL", textcolor=color.white, size=size.tiny, offset=-pivotLookback)
+plotshape(hiddenBearDiv, "Hidden Bearish Div", shape.labeldown, location.top, color.new(QMA_HIDDEN_DIV, 20), text="H-BEAR", textcolor=color.white, size=size.tiny, offset=-pivotLookback)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUANTUM ZONES VISUALIZATION
+// ─────────────────────────────────────────────────────────────────────────────
+if barstate.islast and showQuantumZones
+    int zoneLookback = math.min(regime.duration, 500)
+    for zone in quantumZones
+        if zone.isActive
+            zone.zoneBox := box.new(
+                bar_index - zoneLookback, zone.lower,
+                bar_index, zone.upper,
+                bgcolor=color.new(zone.upper > 50 ? QMA_QUANTUM_GREEN : QMA_QUANTUM_RED, 85),
+                border_color=color.new(zone.upper > 50 ? QMA_QUANTUM_GREEN : QMA_QUANTUM_RED, 30),
+                text=""
+            )
+            
+            zone.midLine := line.new(
+                bar_index - zoneLookback, (zone.upper + zone.lower) / 2,
+                bar_index, (zone.upper + zone.lower) / 2,
+                color=color.new(QMA_NEUTRAL_GRAY, 50),
+                style=line.style_dashed
+            )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOMENTUM BURST VISUALIZATION (signal-only, no boxes)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOMENTUM VORTEX VISUALIZATION
+// ─────────────────────────────────────────────────────────────────────────────
+if showMomentumVortex and barstate.islast
+    // Clear old particles
+    for particle in vortex.particles
+        label.delete(particle)
+    array.clear(vortex.particles)
+    
+    // Create vortex particles
+    if vortex.intensity > 0.5
+        for i = 0 to math.min(10, math.round(vortex.intensity * 5))
+            angle = (i / 10) * 2 * math.pi + vortex.rotation
+            radius = math.min(vortex.intensity * 10, 5)
+            
+            int particleX = math.max(0, math.min(bar_index, int(math.round(bar_index + math.cos(angle) * radius))))
+            particleY = quantumRSI + math.sin(angle) * radius
+            
+            particle = label.new(
+                particleX, particleY, "●",
+                color=color.new(QMA_QUANTUM_CYAN, 70 - i * 5),
+                size=size.tiny
+            )
+            array.push(vortex.particles, particle)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUANTUM DASHBOARD
+// ─────────────────────────────────────────────────────────────────────────────
+if showDashboard
+    var table dashboard = table.new(position.top_right, 3, 12, 
+                                   bgcolor=color.new(QMA_DARK_MATTER, 0), 
+                                   border_color=color.new(QMA_NEUTRAL_GRAY, 30),
+                                   border_width=1,
+                                   frame_color=color.new(QMA_QUANTUM_CYAN, 40),
+                                   frame_width=2)
+    
+    if barstate.islast
+        regimeText = switch regime.current
+            3 => "EXTREME BULL"
+            2 => "▲ STRONG BULL"
+            1 => "△ MILD BULL"
+            -1 => "▽ MILD BEAR"
+            -2 => "▼ STRONG BEAR"
+            -3 => "EXTREME BEAR"
+            => "◆ NEUTRAL"
+        
+        regimeCol = switch regime.current
+            3 => QMA_EXTREME_BULL
+            2 => QMA_STRONG_BULL
+            1 => QMA_MILD_BULL
+            -1 => QMA_MILD_BEAR
+            -2 => QMA_STRONG_BEAR
+            -3 => QMA_EXTREME_BEAR
+            => QMA_NEUTRAL_GRAY
+        
+        momentumText = rsiMomentum > 2 ? "⬆ STRONG UP" : rsiMomentum > 0 ? "↑ UP" : rsiMomentum < -2 ? "⬇ STRONG DOWN" : rsiMomentum < 0 ? "↓ DOWN" : "— FLAT"
+        momentumCol = rsiMomentum > 0 ? QMA_QUANTUM_GREEN : rsiMomentum < 0 ? QMA_QUANTUM_RED : QMA_NEUTRAL_GRAY
+        
+        quantumText = quantumValue > 0.3 ? "HIGH" : quantumValue > 0 ? "MEDIUM" : quantumValue < -0.3 ? "LOW" : "NEUTRAL"
+        quantumCol = quantumValue > 0 ? QMA_QUANTUM_CYAN : quantumValue < 0 ? QMA_QUANTUM_PURPLE : QMA_NEUTRAL_GRAY
+        
+        // Strength bar visual
+        int strengthBars = math.round(regime.strength / 10)
+        string strengthBar = ""
+        for i = 0 to 9
+            strengthBar += i < strengthBars ? "█" : "░"
+        
+        // RSI zone text
+        rsiZone = quantumRSI > obLevel ? "OVERBOUGHT" : quantumRSI < osLevel ? "OVERSOLD" : quantumRSI > 55 ? "BULLISH" : quantumRSI < 45 ? "BEARISH" : "NEUTRAL"
+        rsiZoneCol = quantumRSI > obLevel ? QMA_QUANTUM_RED : quantumRSI < osLevel ? QMA_QUANTUM_CYAN : quantumRSI > 55 ? QMA_QUANTUM_GREEN : quantumRSI < 45 ? QMA_QUANTUM_RED : QMA_NEUTRAL_GRAY
+        
+        // Title row
+        table.cell(dashboard, 0, 0, "  QUANTUM MOMENTUM ANALYZER  ", text_color=QMA_QUANTUM_CYAN, text_size=size.normal, bgcolor=color.new(QMA_DARK_MATTER, 0))
+        table.cell(dashboard, 1, 0, "", bgcolor=color.new(QMA_DARK_MATTER, 0))
+        table.cell(dashboard, 2, 0, "", bgcolor=color.new(QMA_DARK_MATTER, 0))
+        table.merge_cells(dashboard, 0, 0, 2, 0)
+        
+        // QRSI value - big display
+        table.cell(dashboard, 0, 1, "  QRSI  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 1, 1, str.tostring(quantumRSI, "#.##"), text_color=momentumColor, text_size=size.normal, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 2, 1, rsiZone, text_color=rsiZoneCol, text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        
+        // Regime
+        table.cell(dashboard, 0, 2, "  Regime  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#12121f, 0))
+        table.cell(dashboard, 1, 2, regimeText, text_color=regimeCol, text_size=size.small, bgcolor=color.new(#12121f, 0))
+        table.cell(dashboard, 2, 2, str.tostring(regime.duration) + " bars", text_color=color.new(#808080, 0), text_size=size.small, bgcolor=color.new(#12121f, 0))
+        
+        // Strength with bar
+        table.cell(dashboard, 0, 3, "  Strength  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 1, 3, str.tostring(regime.strength, "#.#") + "%", text_color=regimeCol, text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 2, 3, strengthBar, text_color=regimeCol, text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        
+        // Momentum
+        table.cell(dashboard, 0, 4, "  Momentum  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#12121f, 0))
+        table.cell(dashboard, 1, 4, momentumText, text_color=momentumCol, text_size=size.small, bgcolor=color.new(#12121f, 0))
+        table.cell(dashboard, 2, 4, str.tostring(rsiMomentum, "#.##"), text_color=momentumCol, text_size=size.small, bgcolor=color.new(#12121f, 0))
+        
+        // Quantum State
+        table.cell(dashboard, 0, 5, "  Quantum  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 1, 5, quantumText, text_color=quantumCol, text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 2, 5, str.tostring(quantumValue, "#.###"), text_color=quantumCol, text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        
+        // Delta
+        deltaCol = rsiDelta > 0 ? QMA_QUANTUM_GREEN : QMA_QUANTUM_RED
+        deltaArrow = rsiDelta > 0 ? "▲ " : rsiDelta < 0 ? "▼ " : "  "
+        table.cell(dashboard, 0, 6, "  Delta  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#12121f, 0))
+        table.cell(dashboard, 1, 6, deltaArrow + str.tostring(rsiDelta, "#.##"), text_color=deltaCol, text_size=size.small, bgcolor=color.new(#12121f, 0))
+        table.cell(dashboard, 2, 6, rsiDelta > 1 ? "EXPANDING" : rsiDelta < -1 ? "CONTRACTING" : "STABLE", text_color=deltaCol, text_size=size.small, bgcolor=color.new(#12121f, 0))
+        
+        // Fast/Slow RSI
+        table.cell(dashboard, 0, 7, "  Fast RSI  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 1, 7, str.tostring(rsiFastSmooth, "#.#"), text_color=color.new(QMA_QUANTUM_GREEN, 0), text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 2, 7, rsiFastSmooth > rsiSlowSmooth ? "ABOVE SLOW" : "BELOW SLOW", text_color=rsiFastSmooth > rsiSlowSmooth ? QMA_QUANTUM_GREEN : QMA_QUANTUM_RED, text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        
+        // Slow RSI
+        table.cell(dashboard, 0, 8, "  Slow RSI  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#12121f, 0))
+        table.cell(dashboard, 1, 8, str.tostring(rsiSlowSmooth, "#.#"), text_color=color.new(QMA_QUANTUM_ORANGE, 0), text_size=size.small, bgcolor=color.new(#12121f, 0))
+        table.cell(dashboard, 2, 8, rsiSlowSmooth > 50 ? "BULLISH BIAS" : "BEARISH BIAS", text_color=rsiSlowSmooth > 50 ? QMA_QUANTUM_GREEN : QMA_QUANTUM_RED, text_size=size.small, bgcolor=color.new(#12121f, 0))
+        
+        // VW RSI
+        table.cell(dashboard, 0, 9, "  VW-RSI  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 1, 9, str.tostring(vwRsiSmooth, "#.#"), text_color=QMA_WARNING_YELLOW, text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 2, 9, vwRsiSmooth > quantumRSI ? "PREMIUM" : "DISCOUNT", text_color=vwRsiSmooth > quantumRSI ? QMA_QUANTUM_GREEN : QMA_QUANTUM_RED, text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        
+        // Bursts
+        table.cell(dashboard, 0, 10, "  Bursts  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#12121f, 0))
+        table.cell(dashboard, 1, 10, str.tostring(burstCount), text_color=QMA_MOMENTUM_BURST, text_size=size.small, bgcolor=color.new(#12121f, 0))
+        table.cell(dashboard, 2, 10, burstCount > 5 ? "HIGH ACTIVITY" : burstCount > 0 ? "ACTIVE" : "QUIET", text_color=burstCount > 5 ? QMA_MOMENTUM_BURST : burstCount > 0 ? QMA_WARNING_YELLOW : QMA_NEUTRAL_GRAY, text_size=size.small, bgcolor=color.new(#12121f, 0))
+        
+        // Vortex
+        table.cell(dashboard, 0, 11, "  Vortex  ", text_color=color.new(#b0b0b0, 0), text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 1, 11, str.tostring(vortex.intensity, "#.##"), text_color=vortex.intensity > 1 ? QMA_QUANTUM_CYAN : QMA_NEUTRAL_GRAY, text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+        table.cell(dashboard, 2, 11, flowDirection > 0 ? "↑ BULLISH FLOW" : flowDirection < 0 ? "↓ BEARISH FLOW" : "— NEUTRAL", text_color=flowDirection > 0 ? QMA_QUANTUM_GREEN : flowDirection < 0 ? QMA_QUANTUM_RED : QMA_NEUTRAL_GRAY, text_size=size.small, bgcolor=color.new(#1a1a2e, 0))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUANTUM ALERTS
+// ─────────────────────────────────────────────────────────────────────────────
+alertcondition(ta.crossover(quantumRSI, quantumOb), "Quantum Overbought Entry", "Quantum RSI entered overbought zone")
+alertcondition(ta.crossunder(quantumRSI, quantumOs), "Quantum Oversold Entry", "Quantum RSI entered oversold zone")
+alertcondition(bullDiv, "Bullish Divergence", "Bullish quantum divergence detected")
+alertcondition(bearDiv, "Bearish Divergence", "Bearish quantum divergence detected")
+alertcondition(regimeSeries != regimeSeries[1] and regimeSeries > 0, "Bullish Regime Change", "Momentum shifted to bullish quantum regime")
+alertcondition(regimeSeries != regimeSeries[1] and regimeSeries < 0, "Bearish Regime Change", "Momentum shifted to bearish quantum regime")
+alertcondition(isBurst, "Momentum Burst", "Quantum momentum burst detected")
+alertcondition(vortex.intensity > 1, "Vortex Activation", "Momentum vortex intensity threshold reached")
+alertcondition(quantumValue > 0.5, "Quantum High State", "Quantum amplitude entered high state")
+alertcondition(quantumValue < -0.5, "Quantum Low State", "Quantum amplitude entered low state")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOMENTUM FLOW VISUALIZATION
+// ─────────────────────────────────────────────────────────────────────────────
+if showMomentumFlow and barstate.islast
+    // Draw momentum flow lines
+    for i = 1 to flowLength
+        if bar_index - i >= 0
+            flowAlpha = (flowLength - i) / flowLength * 100
+            flowColor = flowDirection > 0 ? color.new(QMA_QUANTUM_GREEN, 100 - flowAlpha) : color.new(QMA_QUANTUM_RED, 100 - flowAlpha)
+            
+            flowY = quantumRSI[i]
+            line.new(
+                bar_index - i, flowY,
+                bar_index - i + 1, quantumRSI[i - 1],
+                color=flowColor,
+                width=math.max(1, flowLength - i),
+                style=line.style_solid
+            )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLEANUP FUNCTIONS
+// ─────────────────────────────────────────────────────────────────────────────
+// Cleanup quantum zones
+if barstate.isconfirmed and array.size(quantumZones) > 5
+    for i = array.size(quantumZones) - 1 to 0
+        zone = array.get(quantumZones, i)
+        if not na(zone.zoneBox)
+            box.delete(zone.zoneBox)
+        if not na(zone.midLine)
+            line.delete(zone.midLine)
+        array.remove(quantumZones, i)
+        break
+
+// Cleanup momentum bursts
+if barstate.isconfirmed and array.size(bursts) > 5
+    for i = array.size(bursts) - 1 to 0
+        burst = array.get(bursts, i)
+        if not na(burst.burstBox)
+            box.delete(burst.burstBox)
+        if not na(burst.burstLabel)
+            label.delete(burst.burstLabel)
+        array.remove(bursts, i)
+        break
+
+// Cleanup vortex particles
+if barstate.isconfirmed and array.size(vortex.particles) > 20
+    for i = array.size(vortex.particles) - 1 to 0
+        if i >= 20
+            particle = array.get(vortex.particles, i)
+            label.delete(particle)
+            array.remove(vortex.particles, i)
