@@ -1,0 +1,1005 @@
+//@version=6
+// ══════════════════════════════════════════════════════════
+// STEALTHTRAIL SUPERTREND ML PRO [WillyAlgoTrader]
+// ══════════════════════════════════════════════════════════
+// Author:  Willy | WillyAlgoTrader
+// Version: 5.1.0 — ML Pro Edition
+
+indicator(
+    title            = "StealthTrail SuperTrend ML Pro [WillyAlgoTrader]",
+    shorttitle       = "StealthTrail Pro",
+    overlay          = true,
+    max_labels_count = 500,
+    max_lines_count  = 500)
+
+// ══════════════════════════════════════
+// CONSTANTS
+// ══════════════════════════════════════
+GRP_MAIN   = "⚙️ Main Settings"
+GRP_ADAPT  = "🧠 Adaptive Engine"
+GRP_MTF    = "📐 Multi-Timeframe"
+GRP_ML     = "🤖 ML Signal Filter"
+GRP_FILTER = "🔍 Filters"
+GRP_TIME   = "🕐 Session Filter"
+GRP_TPSL   = "🎯 TP / SL"
+GRP_VISUAL = "🎨 Visual Settings"
+GRP_DASH   = "📊 Dashboard"
+GRP_ALERT  = "🔔 Alerts"
+GRP_COLORS = "🎨 Colors"
+GRP_ADV    = "🔧 Advanced"
+
+INDICATOR_VERSION = "v5.1.0"
+
+// ══════════════════════════════════════
+// INPUTS
+// ══════════════════════════════════════
+
+// ── Main Settings ───────────────────────────────────────
+autoTuneInput    = input.bool(true, "Auto-Tune Parameters", group = GRP_MAIN)
+atrLengthInput   = input.int(13, "ATR Length (manual)", minval = 1, maxval = 200, group = GRP_MAIN)
+baseMultInput    = input.float(2.5, "Base Multiplier (manual)", minval = 0.5, maxval = 8.0, step = 0.1, group = GRP_MAIN)
+
+// ── Adaptive Engine ─────────────────────────────────────
+profileLookback   = input.int(100, "Profiling Lookback", minval = 50, maxval = 500, step = 10, group = GRP_ADAPT)
+regimeSensitivity = input.float(1.0, "Regime Sensitivity", minval = 0.5, maxval = 2.0, step = 0.1, group = GRP_ADAPT)
+showProfileInput  = input.bool(true, "Show Instrument Profile", group = GRP_ADAPT)
+
+// ── Multi-Timeframe ─────────────────────────────────────
+useMTF        = input.bool(true, "Multi-Timeframe Confluence", group = GRP_MTF, tooltip = "Check if the higher timeframe trend agrees.")
+mtfMode       = input.string("Auto", "HTF Selection", options = ["Auto", "Manual"], group = GRP_MTF)
+mtfManual     = input.timeframe("240", "Manual HTF", group = GRP_MTF)
+mtfStrictness = input.string("Moderate", "MTF Strictness", options = ["Loose", "Moderate", "Strict"], group = GRP_MTF)
+
+// ── ML Signal Filter ────────────────────────────────────
+useMLFilter    = input.bool(false, "Enable ML Signal Filter", group = GRP_ML)
+mlGateInput    = input.float(21.0, "Confidence Gate", minval = 10.0, maxval = 90.0, step = 5.0, group = GRP_ML)
+selfLearnInput = input.bool(true, "Self-Learning Gate", group = GRP_ML)
+evalHorizon    = input.int(15, "Evaluation Horizon (bars)", minval = 5, maxval = 50, group = GRP_ML)
+showMLDebug    = input.bool(false, "Show ML Score on Signals", group = GRP_ML)
+
+// ── ML Weights (13 features) ────────────────────────────
+GRP_W = "🤖 ML Weights (advanced)"
+w1_momentum    = input.float(0.15, "W1: Momentum (RSI)", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w2_volume      = input.float(0.08, "W2: Volume Surge", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w3_trend       = input.float(0.15, "W3: Trend (ER)", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w4_volatility  = input.float(-0.08, "W4: Vol Shock", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w5_distance    = input.float(0.10, "W5: Band Distance", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w6_macd        = input.float(0.08, "W6: MACD", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w7_structure   = input.float(0.08, "W7: Price Structure", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w8_regime      = input.float(0.04, "W8: Regime", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w9_mtf         = input.float(0.12, "W9: MTF Confluence", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w10_adx        = input.float(0.10, "W10: ADX Strength", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w11_divergence = input.float(0.08, "W11: RSI Divergence", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w12_volprofile = input.float(0.06, "W12: Vol Profile Zone", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w13_session    = input.float(0.04, "W13: Session Quality", minval = -1.0, maxval = 1.0, step = 0.01, group = GRP_W)
+w_bias         = input.float(0.0, "Bias", minval = -50.0, maxval = 50.0, step = 1.0, group = GRP_W)
+
+// ── Classic Filters ─────────────────────────────────────
+cushionInput     = input.float(0.15, "Flip Cushion ×ATR", minval = 0.0, maxval = 1.0, step = 0.05, group = GRP_FILTER)
+cooldownInput    = input.int(3, "Signal Cooldown", minval = 0, maxval = 20, group = GRP_FILTER)
+useMomentumInput = input.bool(true, "Momentum Filter (RSI)", group = GRP_FILTER)
+rsiLengthInput   = input.int(13, "RSI Length", minval = 2, maxval = 50, group = GRP_FILTER)
+rsiThreshInput   = input.float(45.0, "RSI Threshold", minval = 30.0, maxval = 60.0, step = 1.0, group = GRP_FILTER)
+useVolumeInput   = input.bool(false, "Volume Filter", group = GRP_FILTER)
+volMultInput     = input.float(1.2, "Volume Multiplier", minval = 0.5, maxval = 3.0, step = 0.1, group = GRP_FILTER)
+
+// ── Session Filter ──────────────────────────────────────
+useSessionFilter = input.bool(false, "Enable Session Filter", group = GRP_TIME)
+sessionTimezone  = input.string("UTC", "Timezone", options = ["UTC", "America/New_York", "Europe/London", "Asia/Tokyo"], group = GRP_TIME)
+sessionKillStart = input.int(21, "Kill Zone Start (hour)", minval = 0, maxval = 23, group = GRP_TIME)
+sessionKillEnd   = input.int(1, "Kill Zone End (hour)", minval = 0, maxval = 23, group = GRP_TIME)
+
+// ── TP / SL System ──────────────────────────────────────
+useTPSL       = input.bool(true, "Enable TP/SL System", group = GRP_TPSL)
+slMode        = input.string("Band", "Stop Loss Mode", options = ["ATR", "Band", "Fixed %"], group = GRP_TPSL, tooltip = "ATR: adaptive to volatility\nBand: SuperTrend band as stop (recommended)\nFixed %: percentage from entry")
+slAtrMult     = input.float(1.5, "SL ATR Multiplier", minval = 0.5, maxval = 5.0, step = 0.1, group = GRP_TPSL, tooltip = "Used when SL Mode = ATR")
+slFixedPct    = input.float(2.0, "SL Fixed %", minval = 0.1, maxval = 10.0, step = 0.1, group = GRP_TPSL, tooltip = "Used when SL Mode = Fixed %")
+tpLevels      = input.int(3, "Take Profit Levels", minval = 1, maxval = 3, group = GRP_TPSL)
+tp1Mult       = input.float(2, "TP1 ATR Multiplier", minval = 0.5, maxval = 10.0, step = 0.1, group = GRP_TPSL)
+tp2Mult       = input.float(4, "TP2 ATR Multiplier", minval = 1.0, maxval = 15.0, step = 0.1, group = GRP_TPSL)
+tp3Mult       = input.float(6, "TP3 ATR Multiplier", minval = 1.5, maxval = 20.0, step = 0.1, group = GRP_TPSL)
+useTrailing   = input.bool(true, "Trailing Stop", group = GRP_TPSL, tooltip = "After entry, trail the SL behind price")
+trailMode     = input.string("Band", "Trail Mode", options = ["ATR", "Band", "ATR → Band"], group = GRP_TPSL, tooltip = "ATR: trail at fixed ATR distance from price\nBand: use SuperTrend band as trailing stop (recommended)\nATR → Band: start with tight ATR stop, switch to band when it catches up")
+trailAtrMult  = input.float(1.2, "Trail ATR Multiplier", minval = 0.3, maxval = 5.0, step = 0.1, group = GRP_TPSL, tooltip = "Distance of trailing stop from price, in ATR.\nUsed in ATR and ATR → Band modes")
+showTPSLLines = input.bool(true, "Show TP/SL Lines", group = GRP_TPSL)
+tpslLabelSize = input.string("Small", "TP/SL Label Size", options = ["Tiny", "Small", "Normal"], group = GRP_TPSL, tooltip = "Size of the TP/SL price labels and hit markers")
+showRR        = input.bool(false, "Show R:R on Entry", group = GRP_TPSL, tooltip = "Display Risk:Reward ratio label at signal")
+
+// ── Visual Settings ─────────────────────────────────────
+themeInput          = input.string("Auto", "Theme", options = ["Auto", "Dark", "Light"], group = GRP_VISUAL)
+showSignalsInput    = input.bool(true, "Show Long/Short Signals", group = GRP_VISUAL)
+showFilteredInput   = input.bool(false, "Show Filtered Flips", group = GRP_VISUAL)
+showMLRejected      = input.bool(false, "Show ML-Rejected Signals", group = GRP_VISUAL)
+showBandInput       = input.bool(true, "Show SuperTrend Band", group = GRP_VISUAL)
+showFillInput       = input.bool(true, "Show Gradient Fill", group = GRP_VISUAL)
+showStrengthBgInput = input.bool(false, "Show Trend Background", group = GRP_VISUAL)
+showWatermarkInput  = input.bool(true, "Show Watermark", group = GRP_VISUAL)
+showRegimeBadge     = input.bool(false, "Show Regime Badge", group = GRP_VISUAL)
+showDivergence      = input.bool(false, "Show Divergence Dots", group = GRP_VISUAL)
+
+// ── Dashboard ───────────────────────────────────────────
+showDashInput = input.bool(true, "Show Dashboard", group = GRP_DASH)
+dashPosStr    = input.string("Top Right", "Dashboard Position", options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"], group = GRP_DASH)
+dashFontSize  = input.string("Small", "Dashboard Font Size", options = ["Small", "Normal", "Large"], group = GRP_DASH)
+
+// ── Alerts ──────────────────────────────────────────────
+webhookInput = input.bool(false, "Webhook JSON Format", group = GRP_ALERT)
+
+// ── Colors ──────────────────────────────────────────────
+bullColorInput = input.color(#00E676, "Bull", inline = "colors", group = GRP_COLORS)
+bearColorInput = input.color(#FF5252, "Bear", inline = "colors", group = GRP_COLORS)
+
+// ── Advanced ────────────────────────────────────────────
+minMultInput = input.float(1.0, "Min Adaptive Mult", minval = 0.3, maxval = 5.0, step = 0.1, group = GRP_ADV)
+maxMultInput = input.float(5.0, "Max Adaptive Mult", minval = 2.0, maxval = 10.0, step = 0.5, group = GRP_ADV)
+
+// ══════════════════════════════════════
+// THEME
+// ══════════════════════════════════════
+isDark = switch themeInput
+    "Dark"  => true
+    "Light" => false
+    => color.r(chart.bg_color) < 128
+
+TEXT_COLOR      = isDark ? #E0E0E0 : #1A1A1A
+TEXT_MUTED      = isDark ? color.new(#9E9E9E, 0) : color.new(#757575, 0)
+TABLE_BG        = isDark ? color.new(#131722, 5) : color.new(#FFFFFF, 5)
+TABLE_BORDER    = isDark ? color.new(#2A2E39, 0) : color.new(#D0D0D0, 0)
+TABLE_ROW_ALT   = isDark ? color.new(#1C2030, 0) : color.new(#F0F4F8, 0)
+HEADER_BG       = color.new(#2962FF, 0)
+HEADER_TEXT     = #FFFFFF
+LABEL_TEXT      = #FFFFFF
+WM_COLOR        = isDark ? color.new(#FFFFFF, 80) : color.new(#000000, 80)
+FILTERED_COLOR  = isDark ? color.new(#888888, 30) : color.new(#999999, 30)
+ML_REJECT_CLR   = isDark ? color.new(#FFD54F, 50) : color.new(#F9A825, 50)
+REGIME_TREND    = color.new(#2196F3, 0)
+REGIME_RANGE    = color.new(#FF9800, 0)
+REGIME_VOLAT    = color.new(#E040FB, 0)
+ML_HEADER_BG    = color.new(#00BFA5, 0)
+DIV_BULL_CLR    = color.new(#00E676, 30)
+DIV_BEAR_CLR    = color.new(#FF5252, 30)
+MEDIUM_COLOR    = isDark ? #FFEB3B : #E67E00
+TP_LINE_CLR     = color.new(#00E676, 30)
+SL_LINE_CLR     = color.new(#FF5252, 30)
+TP_HIT_CLR      = color.new(#00E676, 0)
+SL_HIT_CLR      = color.new(#FF5252, 0)
+TPSL_HEADER_BG  = color.new(#FF6D00, 0)
+ENTRY_LINE_CLR  = color.new(#2196F3, 30)
+
+dashSize = switch dashFontSize
+    "Small"  => size.small
+    "Normal" => size.normal
+    "Large"  => size.large
+    => size.normal
+
+dashHeaderSize = switch dashFontSize
+    "Small"  => size.normal
+    "Normal" => size.large
+    "Large"  => size.huge
+    => size.large
+
+tpslSize = switch tpslLabelSize
+    "Tiny"   => size.tiny
+    "Small"  => size.small
+    "Normal" => size.normal
+    => size.small
+
+// ══════════════════════════════════════
+// UTILITIES
+// ══════════════════════════════════════
+safeDiv(float num, float den, float fallback = 0.0) =>
+    den != 0 and not na(num) and not na(den) ? num / den : fallback
+
+clamp(float val, float lo, float hi) =>
+    math.max(lo, math.min(hi, val))
+
+lerp(float a, float b, float t) =>
+    a + (b - a) * clamp(t, 0.0, 1.0)
+
+sigmoid100(float x, float center, float k) =>
+    100.0 / (1.0 + math.exp(-k * (x - center)))
+
+// ══════════════════════════════════════
+// PRE-COMPUTED INDICATOR BANK
+// ══════════════════════════════════════
+float atr_5  = ta.atr(5),  float atr_8  = ta.atr(8),  float atr_10 = ta.atr(10)
+float atr_13 = ta.atr(13), float atr_16 = ta.atr(16), float atr_21 = ta.atr(21)
+float atr_30 = ta.atr(30), float atr_40 = ta.atr(40), float atr_50 = ta.atr(50)
+
+getAtr(int len) =>
+    if len <= 5
+        atr_5
+    else if len <= 8
+        lerp(atr_5, atr_8, (len - 5) / 3.0)
+    else if len <= 10
+        lerp(atr_8, atr_10, (len - 8) / 2.0)
+    else if len <= 13
+        lerp(atr_10, atr_13, (len - 10) / 3.0)
+    else if len <= 16
+        lerp(atr_13, atr_16, (len - 13) / 3.0)
+    else if len <= 21
+        lerp(atr_16, atr_21, (len - 16) / 5.0)
+    else if len <= 30
+        lerp(atr_21, atr_30, (len - 21) / 9.0)
+    else if len <= 40
+        lerp(atr_30, atr_40, (len - 30) / 10.0)
+    else
+        lerp(atr_40, atr_50, (len - 40) / 10.0)
+
+float rsi_5  = ta.rsi(close, 5),  float rsi_7  = ta.rsi(close, 7),  float rsi_9  = ta.rsi(close, 9)
+float rsi_11 = ta.rsi(close, 11), float rsi_13 = ta.rsi(close, 13), float rsi_16 = ta.rsi(close, 16)
+float rsi_20 = ta.rsi(close, 20), float rsi_25 = ta.rsi(close, 25), float rsi_30 = ta.rsi(close, 30)
+
+getRsi(int len) =>
+    if len <= 5
+        rsi_5
+    else if len <= 7
+        lerp(rsi_5, rsi_7, (len - 5) / 2.0)
+    else if len <= 9
+        lerp(rsi_7, rsi_9, (len - 7) / 2.0)
+    else if len <= 11
+        lerp(rsi_9, rsi_11, (len - 9) / 2.0)
+    else if len <= 13
+        lerp(rsi_11, rsi_13, (len - 11) / 2.0)
+    else if len <= 16
+        lerp(rsi_13, rsi_16, (len - 13) / 3.0)
+    else if len <= 20
+        lerp(rsi_16, rsi_20, (len - 16) / 4.0)
+    else if len <= 25
+        lerp(rsi_20, rsi_25, (len - 20) / 5.0)
+    else
+        lerp(rsi_25, rsi_30, (len - 25) / 5.0)
+
+float atrBase    = nz(atr_13, nz(high - low, 0.001))
+float smaAtr_20  = ta.sma(atrBase, 20),  float smaAtr_35  = ta.sma(atrBase, 35)
+float smaAtr_50  = ta.sma(atrBase, 50),  float smaAtr_70  = ta.sma(atrBase, 70)
+float smaAtr_100 = ta.sma(atrBase, 100), float smaAtr_150 = ta.sma(atrBase, 150)
+float smaAtr_200 = ta.sma(atrBase, 200)
+
+getSmaAtr(int len) =>
+    if len <= 20
+        smaAtr_20
+    else if len <= 35
+        lerp(smaAtr_20, smaAtr_35, (len - 20) / 15.0)
+    else if len <= 50
+        lerp(smaAtr_35, smaAtr_50, (len - 35) / 15.0)
+    else if len <= 70
+        lerp(smaAtr_50, smaAtr_70, (len - 50) / 20.0)
+    else if len <= 100
+        lerp(smaAtr_70, smaAtr_100, (len - 70) / 30.0)
+    else if len <= 150
+        lerp(smaAtr_100, smaAtr_150, (len - 100) / 50.0)
+    else
+        lerp(smaAtr_150, smaAtr_200, (len - 150) / 50.0)
+
+// ══════════════════════════════════════
+// 🧠 INSTRUMENT PROFILING
+// ══════════════════════════════════════
+float priceChange     = math.abs(close - close[profileLookback])
+float totalPath       = math.sum(math.abs(close - close[1]), profileLookback)
+float efficiencyRatio = safeDiv(priceChange, totalPath, 0.5)
+float atrProfile      = ta.atr(profileLookback)
+float normVol         = safeDiv(atrProfile, close, 0.01) * 100.0
+float atrShort        = ta.atr(20)
+float atrLongP        = ta.atr(profileLookback)
+float volCluster      = safeDiv(atrShort, atrLongP, 1.0)
+
+int acWindow = int(clamp(float(profileLookback), 50, 100))
+float ret1 = close / close[1] - 1.0
+float ret2 = nz(close[1] / close[2] - 1.0)
+float corrSum = 0.0, float r1Sq = 0.0, float r2Sq = 0.0
+for i = 0 to acWindow - 1
+    float r1 = nz(ret1[i]), float r2 = nz(ret2[i])
+    corrSum += r1 * r2, r1Sq += r1 * r1, r2Sq += r2 * r2
+float autoCorr = safeDiv(corrSum, math.sqrt(r1Sq * r2Sq), 0.0)
+
+// ══════════════════════════════════════
+// 🎯 REGIME CLASSIFICATION
+// ══════════════════════════════════════
+int emaSmoothLen = int(math.max(profileLookback / 3, 10))
+float erSmooth   = ta.ema(efficiencyRatio, emaSmoothLen)
+float vcSmooth   = ta.ema(volCluster, emaSmoothLen)
+
+float trendScoreR = erSmooth * regimeSensitivity
+float rangeScoreR = (1.0 - erSmooth) * (1.0 - math.abs(autoCorr)) * regimeSensitivity
+float volatScoreR = clamp(vcSmooth - 1.0, 0.0, 2.0) * regimeSensitivity
+
+string regime = "TRENDING"
+if trendScoreR >= rangeScoreR and trendScoreR >= volatScoreR
+    regime := "TRENDING"
+else if rangeScoreR >= trendScoreR and rangeScoreR >= volatScoreR
+    regime := "RANGING"
+else
+    regime := "VOLATILE"
+
+float totalSR          = trendScoreR + rangeScoreR + volatScoreR
+float regimeConfidence = totalSR > 0 ? math.max(trendScoreR, math.max(rangeScoreR, volatScoreR)) / totalSR * 100 : 33.0
+
+// ══════════════════════════════════════
+// AUTO-TUNED PARAMETERS
+// ══════════════════════════════════════
+float wT = trendScoreR / math.max(totalSR, 1e-10)
+float wR = rangeScoreR / math.max(totalSR, 1e-10)
+float wV = volatScoreR / math.max(totalSR, 1e-10)
+
+int effectiveAtrLen      = autoTuneInput ? int(clamp((wT * 10.0 + wR * 16.0 + wV * 21.0) * clamp(normVol / 1.5, 0.7, 1.8), 5, 50)) : atrLengthInput
+float effectiveBaseMult  = autoTuneInput ? clamp((wT * 2.0 + wR * 3.2 + wV * 3.8) * clamp(normVol / 1.0, 0.8, 1.5), 1.2, 6.0) : baseMultInput
+float effectiveCushion   = autoTuneInput ? clamp(wT * 0.05 + wR * 0.25 + wV * 0.15, 0.0, 0.5) : cushionInput
+int effectiveCooldown    = autoTuneInput ? int(clamp(wT * 2.0 + wR * 5.0 + wV * 3.0, 1, 10)) : cooldownInput
+float effectiveRsiThresh = autoTuneInput ? clamp(wT * 40.0 + wR * 52.0 + wV * 45.0, 35.0, 58.0) : rsiThreshInput
+int effectiveRsiLen      = autoTuneInput ? int(clamp(effectiveAtrLen * 0.9, 5, 30)) : rsiLengthInput
+int adaptSmooth          = autoTuneInput ? int(clamp(float(effectiveAtrLen) * 4.0, 20, 200)) : 55
+
+// ══════════════════════════════════════
+// CORE SUPERTREND
+// ══════════════════════════════════════
+int WARMUP_BARS = math.max(profileLookback, 55)
+bool isWarmedUp = bar_index >= WARMUP_BARS
+
+float atrVal       = nz(getAtr(effectiveAtrLen), nz(high - low, 0.001))
+float atrSmaVal    = nz(getSmaAtr(adaptSmooth), atrVal)
+float volRatio     = atrSmaVal > 0 ? atrVal / atrSmaVal : 1.0
+float adaptiveMult = math.max(minMultInput, math.min(maxMultInput, effectiveBaseMult * volRatio))
+
+float upperBand = hl2 + adaptiveMult * atrVal
+float lowerBand = hl2 - adaptiveMult * atrVal
+
+var int trendDir      = 1
+var float stBand      = na
+var int barsSinceFlip = 100
+barsSinceFlip += 1
+float prevBand    = nz(stBand[1], trendDir == 1 ? lowerBand : upperBand)
+float flipCushion = effectiveCushion * atrVal
+
+if trendDir == 1
+    stBand := math.max(lowerBand, prevBand)
+    if close < (stBand - flipCushion) and barsSinceFlip >= effectiveCooldown
+        trendDir := -1, stBand := upperBand, barsSinceFlip := 0
+else
+    stBand := math.min(upperBand, prevBand)
+    if close > (stBand + flipCushion) and barsSinceFlip >= effectiveCooldown
+        trendDir := 1, stBand := lowerBand, barsSinceFlip := 0
+
+var int confirmedTrendDir = 1
+if barstate.isconfirmed
+    confirmedTrendDir := trendDir
+bool rawFlip = barstate.isconfirmed and trendDir != nz(confirmedTrendDir[1], trendDir)
+
+// ══════════════════════════════════════
+// 📐 MULTI-TIMEFRAME CONFLUENCE
+// ══════════════════════════════════════
+autoHTF() =>
+    tf = timeframe.period
+    switch
+        timeframe.isseconds                 => "5"
+        tf == "1" or tf == "2" or tf == "3" => "15"
+        tf == "5"                            => "30"
+        tf == "15"                           => "60"
+        tf == "30"                           => "120"
+        tf == "60" or tf == "120"            => "240"
+        tf == "240"                          => "D"
+        tf == "D"                            => "W"
+        tf == "W"                            => "M"
+        => "D"
+
+string htfTF     = mtfMode == "Auto" ? autoHTF() : mtfManual
+float htfEmaFast = request.security(syminfo.tickerid, htfTF, ta.ema(close, 20), lookahead = barmerge.lookahead_off)
+float htfEmaSlow = request.security(syminfo.tickerid, htfTF, ta.ema(close, 50), lookahead = barmerge.lookahead_off)
+int htfTrend     = htfEmaFast > htfEmaSlow ? 1 : -1
+bool mtfAligned  = not useMTF or (trendDir == htfTrend)
+bool mtfHardBlock = useMTF and mtfStrictness == "Strict" and not mtfAligned
+
+// ══════════════════════════════════════
+// 🔀 ADX
+// ══════════════════════════════════════
+float adxSmoothing = 14
+float dmPlus   = math.max(high - high[1], 0.0)
+float dmMinus  = math.max(low[1] - low, 0.0)
+float trueRange = math.max(high - low, math.max(math.abs(high - close[1]), math.abs(low - close[1])))
+float smoothTR = 0.0, float smoothDMp = 0.0, float smoothDMm = 0.0
+smoothTR  := nz(smoothTR[1])  - nz(smoothTR[1])  / adxSmoothing + trueRange
+smoothDMp := nz(smoothDMp[1]) - nz(smoothDMp[1]) / adxSmoothing + (dmPlus > dmMinus and dmPlus > 0 ? dmPlus : 0.0)
+smoothDMm := nz(smoothDMm[1]) - nz(smoothDMm[1]) / adxSmoothing + (dmMinus > dmPlus and dmMinus > 0 ? dmMinus : 0.0)
+float diPlus  = smoothTR > 0 ? smoothDMp / smoothTR * 100 : 0.0
+float diMinus = smoothTR > 0 ? smoothDMm / smoothTR * 100 : 0.0
+float dx      = diPlus + diMinus > 0 ? math.abs(diPlus - diMinus) / (diPlus + diMinus) * 100 : 0.0
+var float adxVal = 0.0
+adxVal := nz(adxVal[1]) + (dx - nz(adxVal[1])) / adxSmoothing
+
+// ══════════════════════════════════════
+// 📉 RSI DIVERGENCE
+// ══════════════════════════════════════
+float rsiVal       = nz(getRsi(effectiveRsiLen), 50.0)
+int pivotLookback  = 5
+float priceLow1  = ta.lowest(low, pivotLookback),  float priceLow2  = ta.lowest(low[pivotLookback], pivotLookback)
+float rsiLow1    = ta.lowest(rsiVal, pivotLookback), float rsiLow2   = ta.lowest(rsiVal[pivotLookback], pivotLookback)
+float priceHigh1 = ta.highest(high, pivotLookback), float priceHigh2 = ta.highest(high[pivotLookback], pivotLookback)
+float rsiHigh1   = ta.highest(rsiVal, pivotLookback), float rsiHigh2 = ta.highest(rsiVal[pivotLookback], pivotLookback)
+bool bullDivergence = priceLow1 < priceLow2 and rsiLow1 > rsiLow2 and rsiVal < 40
+bool bearDivergence = priceHigh1 > priceHigh2 and rsiHigh1 < rsiHigh2 and rsiVal > 60
+
+// ══════════════════════════════════════
+// 📊 VOLUME PROFILE
+// ══════════════════════════════════════
+bool hasVolume  = nz(volume, 0) > 0
+float volSma20  = ta.sma(volume, 20)
+float volMax50  = ta.highest(volume, 50)
+var float hvBarPrice = na, var int hvBarAge = 0
+hvBarAge += 1
+if hasVolume and volume == volMax50
+    hvBarPrice := hl2, hvBarAge := 0
+if hvBarAge > 50
+    hvBarPrice := na
+float distToHV   = na(hvBarPrice) ? 999.0 : math.abs(close - hvBarPrice) / math.max(atrVal, 1e-10)
+bool nearVolZone = distToHV < 1.5
+
+// ══════════════════════════════════════
+// 🕐 SESSION QUALITY
+// ══════════════════════════════════════
+int currentHour     = hour(time, sessionTimezone)
+bool isDailyOrAbove = timeframe.isdwm
+float sessionScore  = 50.0
+if not isDailyOrAbove
+    if currentHour >= 13 and currentHour <= 17
+        sessionScore := 100.0
+    else if currentHour >= 8 and currentHour <= 12
+        sessionScore := 80.0
+    else if currentHour >= 18 and currentHour <= 20
+        sessionScore := 70.0
+    else if currentHour >= 0 and currentHour <= 7
+        sessionScore := 30.0
+    else
+        sessionScore := 40.0
+
+bool inKillZone = false
+if useSessionFilter and not isDailyOrAbove
+    if sessionKillStart <= sessionKillEnd
+        inKillZone := currentHour >= sessionKillStart and currentHour <= sessionKillEnd
+    else
+        inKillZone := currentHour >= sessionKillStart or currentHour <= sessionKillEnd
+
+// ══════════════════════════════════════
+// CLASSIC FILTERS
+// ══════════════════════════════════════
+bool momentumOk       = not useMomentumInput or (trendDir == 1 ? rsiVal >= effectiveRsiThresh : rsiVal <= (100.0 - effectiveRsiThresh))
+bool volumeOk         = not useVolumeInput or not hasVolume or (volume > nz(volSma20, 0.0) * volMultInput)
+bool sessionOk        = not useSessionFilter or not inKillZone
+bool classicFiltersOk = momentumOk and volumeOk and sessionOk and not mtfHardBlock
+
+// ══════════════════════════════════════
+// 🤖 ML FEATURES + SCORING
+// ══════════════════════════════════════
+float f1_momentum   = clamp((trendDir == 1 ? (rsiVal - 50.0) * 2.0 : (50.0 - rsiVal) * 2.0) + 50.0, 0.0, 100.0)
+float f2_volume     = hasVolume and nz(volSma20, 0.0) > 0 ? clamp(safeDiv(volume, volSma20, 1.0) * 50.0, 0.0, 100.0) : 50.0
+float f3_trend      = erSmooth * 100.0
+float f4_volatility = clamp((2.0 - volCluster) * 50.0, 0.0, 100.0)
+float bandDist      = trendDir == 1 ? safeDiv(close - nz(stBand, close), math.max(atrVal, 1e-10), 0.0) : safeDiv(nz(stBand, close) - close, math.max(atrVal, 1e-10), 0.0)
+float f5_distance   = sigmoid100(bandDist, 0.5, 3.0)
+float macdLine      = ta.ema(close, 12) - ta.ema(close, 26)
+float macdSignal    = ta.ema(macdLine, 9)
+float macdNorm      = safeDiv(macdLine - macdSignal, math.max(atrVal, 1e-10), 0.0)
+float f6_macd       = sigmoid100(trendDir == 1 ? macdNorm : -macdNorm, 0.0, 5.0)
+float hh = ta.highest(high, 10), float ll = ta.lowest(low, 10)
+float hh_prev = ta.highest(high[10], 10), float ll_prev = ta.lowest(low[10], 10)
+float f7_structure  = trendDir == 1 ?
+     20.0 + (hh > hh_prev ? 30.0 : 0.0) + (ll > ll_prev ? 30.0 : 0.0) :
+     20.0 + (ll < ll_prev ? 30.0 : 0.0) + (hh < hh_prev ? 30.0 : 0.0)
+float f8_regime     = regimeConfidence
+float f9_mtf        = not useMTF ? 50.0 : mtfAligned ? 100.0 : 0.0
+float f10_adx       = clamp(adxVal * 2.5, 0.0, 100.0)
+float f11_divergence = 50.0
+if trendDir == 1 and bullDivergence
+    f11_divergence := 100.0
+else if trendDir == -1 and bearDivergence
+    f11_divergence := 100.0
+else if trendDir == 1 and bearDivergence
+    f11_divergence := 10.0
+else if trendDir == -1 and bullDivergence
+    f11_divergence := 10.0
+float f12_volprofile = nearVolZone ? 100.0 : clamp((3.0 - distToHV) / 3.0 * 100.0, 0.0, 50.0)
+float f13_session    = isDailyOrAbove ? 50.0 : sessionScore
+
+float rawMLScore = w1_momentum * f1_momentum + w2_volume * f2_volume + w3_trend * f3_trend +
+     w4_volatility * f4_volatility + w5_distance * f5_distance + w6_macd * f6_macd +
+     w7_structure * f7_structure + w8_regime * f8_regime + w9_mtf * f9_mtf +
+     w10_adx * f10_adx + w11_divergence * f11_divergence + w12_volprofile * f12_volprofile +
+     w13_session * f13_session + w_bias
+
+float weightSum = math.abs(w1_momentum) + math.abs(w2_volume) + math.abs(w3_trend) +
+     math.abs(w4_volatility) + math.abs(w5_distance) + math.abs(w6_macd) +
+     math.abs(w7_structure) + math.abs(w8_regime) + math.abs(w9_mtf) +
+     math.abs(w10_adx) + math.abs(w11_divergence) + math.abs(w12_volprofile) +
+     math.abs(w13_session)
+
+float normalizedScore = weightSum > 0 ? rawMLScore / weightSum : 50.0
+float mlScore         = sigmoid100(normalizedScore, 50.0, 0.08)
+
+// ══════════════════════════════════════
+// SELF-LEARNING
+// ══════════════════════════════════════
+var float adaptiveGate = mlGateInput
+var int totalSignals = 0, var int winSignals = 0
+float decayRate = 0.98
+
+var float pendPrice1 = na, var int pendDir1 = 0, var int pendBar1 = 0, var bool pendActive1 = false, var float pendAtr1 = na
+var float pendPrice2 = na, var int pendDir2 = 0, var int pendBar2 = 0, var bool pendActive2 = false, var float pendAtr2 = na
+var float pendPrice3 = na, var int pendDir3 = 0, var int pendBar3 = 0, var bool pendActive3 = false, var float pendAtr3 = na
+var float pendPrice4 = na, var int pendDir4 = 0, var int pendBar4 = 0, var bool pendActive4 = false, var float pendAtr4 = na
+var float pendPrice5 = na, var int pendDir5 = 0, var int pendBar5 = 0, var bool pendActive5 = false, var float pendAtr5 = na
+
+evalSignal(float sigPrice, int sigDir, int sigBar, bool active, float sigAtr) =>
+    bool matured = active and (bar_index - sigBar >= evalHorizon)
+    bool win = false
+    if matured
+        float pm = sigDir == 1 ? close - sigPrice : sigPrice - close
+        win := pm > 0.5 * sigAtr  // use ATR at entry time, not current
+    [matured, win]
+
+// Apply decay only once per bar, before evaluations
+bool anyMatured = false
+
+[mat1, win1] = evalSignal(pendPrice1, pendDir1, pendBar1, pendActive1, pendAtr1)
+if mat1
+    pendActive1 := false
+    anyMatured  := true
+[mat2, win2] = evalSignal(pendPrice2, pendDir2, pendBar2, pendActive2, pendAtr2)
+if mat2
+    pendActive2 := false
+    anyMatured  := true
+[mat3, win3] = evalSignal(pendPrice3, pendDir3, pendBar3, pendActive3, pendAtr3)
+if mat3
+    pendActive3 := false
+    anyMatured  := true
+[mat4, win4] = evalSignal(pendPrice4, pendDir4, pendBar4, pendActive4, pendAtr4)
+if mat4
+    pendActive4 := false
+    anyMatured  := true
+[mat5, win5] = evalSignal(pendPrice5, pendDir5, pendBar5, pendActive5, pendAtr5)
+if mat5
+    pendActive5 := false
+    anyMatured  := true
+
+// Single decay + batch update for all matured signals this bar
+if anyMatured
+    totalSignals := int(math.round(float(totalSignals) * decayRate))
+    winSignals   := int(math.round(float(winSignals) * decayRate))
+    int newWins = (mat1 and win1 ? 1 : 0) + (mat2 and win2 ? 1 : 0) + (mat3 and win3 ? 1 : 0) + (mat4 and win4 ? 1 : 0) + (mat5 and win5 ? 1 : 0)
+    int newTotal = (mat1 ? 1 : 0) + (mat2 ? 1 : 0) + (mat3 ? 1 : 0) + (mat4 ? 1 : 0) + (mat5 ? 1 : 0)
+    totalSignals += newTotal
+    winSignals   += newWins
+
+if selfLearnInput and totalSignals >= 8
+    float wr = safeDiv(float(winSignals), float(totalSignals), 0.5)
+    if wr > 0.70
+        adaptiveGate := math.max(20.0, adaptiveGate - 1.5)
+    else if wr < 0.50
+        adaptiveGate := math.min(85.0, adaptiveGate + 1.5)
+
+float effectiveGate = selfLearnInput ? adaptiveGate : mlGateInput
+
+// ══════════════════════════════════════
+// SIGNAL LOGIC
+// ══════════════════════════════════════
+bool classicBuy  = rawFlip and trendDir == 1  and classicFiltersOk and isWarmedUp
+bool classicSell = rawFlip and trendDir == -1 and classicFiltersOk and isWarmedUp
+bool mlPass      = not useMLFilter or mlScore >= effectiveGate
+
+bool confirmedBuy   = classicBuy  and mlPass
+bool confirmedSell  = classicSell and mlPass
+bool mlRejectedBuy  = classicBuy  and not mlPass
+bool mlRejectedSell = classicSell and not mlPass
+bool filteredFlip   = rawFlip and not classicFiltersOk and isWarmedUp
+
+// Enqueue for self-learning (store ATR at entry for fair evaluation)
+if confirmedBuy or confirmedSell
+    float sp = close, int sd = trendDir, int sb = bar_index, float sa = atrVal
+    if not pendActive1
+        pendPrice1 := sp, pendDir1 := sd, pendBar1 := sb, pendAtr1 := sa, pendActive1 := true
+    else if not pendActive2
+        pendPrice2 := sp, pendDir2 := sd, pendBar2 := sb, pendAtr2 := sa, pendActive2 := true
+    else if not pendActive3
+        pendPrice3 := sp, pendDir3 := sd, pendBar3 := sb, pendAtr3 := sa, pendActive3 := true
+    else if not pendActive4
+        pendPrice4 := sp, pendDir4 := sd, pendBar4 := sb, pendAtr4 := sa, pendActive4 := true
+    else if not pendActive5
+        pendPrice5 := sp, pendDir5 := sd, pendBar5 := sb, pendAtr5 := sa, pendActive5 := true
+
+var string lastSignal   = "—"
+var int barsSinceSignal = 0
+barsSinceSignal += 1
+if confirmedBuy
+    lastSignal := "LONG", barsSinceSignal := 0
+if confirmedSell
+    lastSignal := "SHORT", barsSinceSignal := 0
+
+// Strength
+calcStrength(float price, float band, float atrV, float rsiV, int dir) =>
+    float dist      = safeDiv(math.abs(price - band), math.max(nz(atrV, 1.0), 1e-10)) * 20.0
+    float distScore = math.min(dist, 50.0)
+    float rsiSafe   = nz(rsiV, 50.0)
+    float momRaw    = dir == 1 ? math.max(rsiSafe - 50.0, 0.0) : math.max(50.0 - rsiSafe, 0.0)
+    math.round(math.min(distScore + math.min(momRaw, 50.0), 100.0))
+
+float strengthVal   = calcStrength(close, nz(stBand, close), atrVal, rsiVal, trendDir)
+string strengthStr  = strengthVal >= 70 ? "Strong" : strengthVal >= 40 ? "Medium" : "Weak"
+color strengthColor = strengthVal >= 70 ? bullColorInput : strengthVal >= 40 ? MEDIUM_COLOR : bearColorInput
+
+// ══════════════════════════════════════
+// 🎯 TP / SL POSITION TRACKING
+// ══════════════════════════════════════
+var int posDir       = 0       // 0=flat, 1=long, -1=short
+var float entryPrice = na
+var float slPrice    = na
+var float entrySL    = na      // initial SL at entry (for R:R display)
+var float tp1Price   = na
+var float tp2Price   = na
+var float tp3Price   = na
+var bool tp1Hit      = false
+var bool tp2Hit      = false
+var bool tp3Hit      = false
+
+// Line references for drawing
+var line entryLine    = na
+var line slLine       = na
+var line tp1Line      = na
+var line tp2Line      = na
+var line tp3Line      = na
+var line tpslVertLine = na  // vertical line SL ↔ highest TP on signal bar
+
+// Right-side labels for levels
+var label entryLabel = na
+var label slLabel    = na
+var label tp1Label   = na
+var label tp2Label   = na
+var label tp3Label   = na
+
+// Helper: calculate initial SL price
+calcSL(int dir, float entry, float atr, float band) =>
+    if slMode == "ATR"
+        dir == 1 ? entry - slAtrMult * atr : entry + slAtrMult * atr
+    else if slMode == "Band"
+        band
+    else // Fixed %
+        dir == 1 ? entry * (1.0 - slFixedPct / 100.0) : entry * (1.0 + slFixedPct / 100.0)
+
+// Helper: delete all TP/SL/entry lines and labels
+clearLines() =>
+    line.delete(entryLine),  line.delete(slLine)
+    line.delete(tp1Line),    line.delete(tp2Line),  line.delete(tp3Line)
+    line.delete(tpslVertLine)
+    label.delete(entryLabel), label.delete(slLabel)
+    label.delete(tp1Label),  label.delete(tp2Label), label.delete(tp3Label)
+
+// ── Check TP/SL hits (order: SL first, then TP1→TP2→TP3 bottom-up) ──
+var string exitReason = ""
+bool posJustClosed = false
+
+if useTPSL and posDir != 0 and barstate.isconfirmed
+    bool slHit = posDir == 1 ? close <= slPrice : close >= slPrice
+
+    if slHit
+        exitReason    := "SL"
+        posDir        := 0
+        posJustClosed := true
+    else
+        // Check TPs by high/low (wick touch = TP hit, like a real limit order)
+        if not tp1Hit and (posDir == 1 ? high >= tp1Price : low <= tp1Price)
+            tp1Hit := true
+            label.delete(tp1Label)   // remove price label, hit marker replaces it
+        if tpLevels >= 2 and not tp2Hit and (posDir == 1 ? high >= tp2Price : low <= tp2Price)
+            tp2Hit := true
+            label.delete(tp2Label)
+        if tpLevels >= 3 and not tp3Hit and (posDir == 1 ? high >= tp3Price : low <= tp3Price)
+            tp3Hit       := true
+            exitReason   := "TP3"
+            posDir       := 0
+            posJustClosed := true
+
+    // Trailing stop update (only when position still open)
+    if posDir != 0 and useTrailing
+        float atrTrail  = posDir == 1 ? close - trailAtrMult * atrVal : close + trailAtrMult * atrVal
+        float bandTrail = nz(stBand, atrTrail)
+
+        float newTrail = atrTrail
+        if trailMode == "Band"
+            // Pure band trailing
+            newTrail := bandTrail
+        else if trailMode == "ATR → Band"
+            // Hybrid: use whichever is tighter (closer to price)
+            // For long: tighter = higher SL. For short: tighter = lower SL.
+            if posDir == 1
+                newTrail := math.max(atrTrail, bandTrail)
+            else
+                newTrail := math.min(atrTrail, bandTrail)
+        // else: pure ATR (newTrail already = atrTrail)
+
+        // Only ratchet: never move SL away from price
+        if posDir == 1
+            slPrice := math.max(nz(slPrice, newTrail), newTrail)
+        else
+            slPrice := math.min(nz(slPrice, newTrail), newTrail)
+
+// ── Open / reverse position on signal ──
+if useTPSL and (confirmedBuy or confirmedSell)
+    // Close existing if opposite
+    if posDir != 0
+        clearLines()
+        posJustClosed := true
+        exitReason    := "REVERSE"
+
+    int newDir     = confirmedBuy ? 1 : -1
+    float newEntry = close
+    float newAtr   = atrVal
+    float newSL    = calcSL(newDir, newEntry, newAtr, stBand)
+
+    posDir     := newDir
+    entryPrice := newEntry
+    slPrice    := newSL
+    entrySL    := newSL   // snapshot for R:R display
+    tp1Hit     := false
+    tp2Hit     := false
+    tp3Hit     := false
+    exitReason := ""
+
+    tp1Price := newDir == 1 ? newEntry + tp1Mult * newAtr : newEntry - tp1Mult * newAtr
+    tp2Price := tpLevels >= 2 ? (newDir == 1 ? newEntry + tp2Mult * newAtr : newEntry - tp2Mult * newAtr) : na
+    tp3Price := tpLevels >= 3 ? (newDir == 1 ? newEntry + tp3Mult * newAtr : newEntry - tp3Mult * newAtr) : na
+
+    // Draw lines and right-side labels
+    if showTPSLLines
+        clearLines()
+        // Entry line (blue)
+        entryLine  := line.new(bar_index, newEntry, bar_index + 1, newEntry, color = ENTRY_LINE_CLR, style = line.style_dotted, width = 1)
+        entryLabel := label.new(bar_index + 1, newEntry, "Entry " + str.tostring(newEntry, format.mintick), style = label.style_label_left, color = color.new(ENTRY_LINE_CLR, 60), textcolor = #000000, size = tpslSize)
+        // SL line (red)
+        slLine   := line.new(bar_index, newSL, bar_index + 1, newSL, color = SL_LINE_CLR, style = line.style_solid, width = 1)
+        slLabel  := label.new(bar_index + 1, newSL, "TR SL " + str.tostring(newSL, format.mintick), style = label.style_label_left, color = color.new(SL_LINE_CLR, 60), textcolor = #000000, size = tpslSize)
+        // TP lines (green)
+        tp1Line  := line.new(bar_index, tp1Price, bar_index + 1, tp1Price, color = TP_LINE_CLR, style = line.style_solid, width = 1)
+        tp1Label := label.new(bar_index + 1, tp1Price, "TP1 " + str.tostring(tp1Price, format.mintick), style = label.style_label_left, color = color.new(TP_LINE_CLR, 60), textcolor = #000000, size = tpslSize)
+        if tpLevels >= 2 and not na(tp2Price)
+            tp2Line  := line.new(bar_index, tp2Price, bar_index + 1, tp2Price, color = TP_LINE_CLR, style = line.style_solid, width = 1)
+            tp2Label := label.new(bar_index + 1, tp2Price, "TP2 " + str.tostring(tp2Price, format.mintick), style = label.style_label_left, color = color.new(TP_LINE_CLR, 60), textcolor = #000000, size = tpslSize)
+        if tpLevels >= 3 and not na(tp3Price)
+            tp3Line  := line.new(bar_index, tp3Price, bar_index + 1, tp3Price, color = TP_LINE_CLR, style = line.style_solid, width = 1)
+            tp3Label := label.new(bar_index + 1, tp3Price, "TP3 " + str.tostring(tp3Price, format.mintick), style = label.style_label_left, color = color.new(TP_LINE_CLR, 60), textcolor = #000000, size = tpslSize)
+
+        // ── Vertical line connecting SL to highest TP on signal bar ──
+        float vertTop = tpLevels >= 3 and not na(tp3Price) ? tp3Price : tpLevels >= 2 and not na(tp2Price) ? tp2Price : tp1Price
+        tpslVertLine := line.new(bar_index, newSL, bar_index, vertTop, color = ENTRY_LINE_CLR, style = line.style_solid, width = 1)
+
+// ── Extend TP/SL/Entry lines and labels to current bar ──
+if useTPSL and posDir != 0 and showTPSLLines
+    int labelX = bar_index + 3
+    if not na(entryLine)
+        line.set_xy2(entryLine, bar_index, entryPrice)
+    if not na(entryLabel)
+        label.set_xy(entryLabel, labelX, entryPrice)
+    if not na(slLine)
+        line.set_xy2(slLine, bar_index, slPrice)
+        line.set_y1(slLine, slPrice)  // update for trailing
+    if not na(slLabel)
+        label.set_xy(slLabel, labelX, slPrice)
+        label.set_text(slLabel, "TR SL " + str.tostring(slPrice, format.mintick))
+    if not na(tp1Line) and not tp1Hit
+        line.set_xy2(tp1Line, bar_index, tp1Price)
+    if not na(tp1Label) and not tp1Hit
+        label.set_xy(tp1Label, labelX, tp1Price)
+    if not na(tp2Line) and not tp2Hit
+        line.set_xy2(tp2Line, bar_index, tp2Price)
+    if not na(tp2Label) and not tp2Hit
+        label.set_xy(tp2Label, labelX, tp2Price)
+    if not na(tp3Line) and not tp3Hit
+        line.set_xy2(tp3Line, bar_index, tp3Price)
+    if not na(tp3Label) and not tp3Hit
+        label.set_xy(tp3Label, labelX, tp3Price)
+
+// ── TP/SL hit labels (placed to the left of the trigger candle) ──
+if useTPSL and tp1Hit and not tp1Hit[1]
+    label.new(bar_index - 1, tp1Price, "TP1 ✓", style = label.style_label_right, color = TP_HIT_CLR, textcolor = LABEL_TEXT, size = tpslSize)
+if useTPSL and tp2Hit and not tp2Hit[1]
+    label.new(bar_index - 1, tp2Price, "TP2 ✓", style = label.style_label_right, color = TP_HIT_CLR, textcolor = LABEL_TEXT, size = tpslSize)
+if useTPSL and posJustClosed and exitReason == "TP3"
+    label.new(bar_index - 1, tp3Price, "TP3 ✓", style = label.style_label_right, color = TP_HIT_CLR, textcolor = LABEL_TEXT, size = tpslSize)
+if useTPSL and posJustClosed and exitReason == "SL"
+    label.new(bar_index - 1, slPrice[1], "SL ✗", style = label.style_label_right, color = SL_HIT_CLR, textcolor = LABEL_TEXT, size = tpslSize)
+
+// Clean up lines on position close
+if useTPSL and posDir == 0 and posDir[1] != 0
+    clearLines()
+
+// ── R:R label on entry ──
+if useTPSL and showRR and (confirmedBuy or confirmedSell)
+    float risk   = math.abs(entryPrice - entrySL)
+    float reward = math.abs(tp1Price - entryPrice)
+    float rr     = risk > 0 ? reward / risk : 0.0
+    string rrStr = "R:R 1:" + str.tostring(rr, "#.#")
+    color rrClr  = rr >= 2.0 ? bullColorInput : rr >= 1.0 ? MEDIUM_COLOR : bearColorInput
+    label.new(bar_index, confirmedBuy ? low : high, rrStr, style = confirmedBuy ? label.style_label_up : label.style_label_down, color = color.new(rrClr, 60), textcolor = LABEL_TEXT, size = size.tiny, yloc = confirmedBuy ? yloc.belowbar : yloc.abovebar)
+
+// ══════════════════════════════════════
+// PLOTS
+// ══════════════════════════════════════
+color bandColor = trendDir == 1 ? bullColorInput : bearColorInput
+
+plot(showBandInput ? stBand : na, "Band", color = bandColor, linewidth = 2, style = plot.style_linebr)
+plot(confirmedBuy or confirmedSell ? stBand : na, "Switch", color = bandColor, style = plot.style_circles, linewidth = 4, join = false)
+plot(showFilteredInput and filteredFlip ? stBand : na, "Filtered", color = FILTERED_COLOR, style = plot.style_circles, linewidth = 3, join = false)
+
+closePlot = plot(close, "Close", color = na, display = display.none)
+bandPlot  = plot(showFillInput ? stBand : na, "BandFill", color = na, display = display.none)
+fill(bandPlot, closePlot, math.max(close, nz(stBand, close)), math.min(close, nz(stBand, close)),
+     trendDir == 1 ? color.new(bullColorInput, 60) : color.new(bearColorInput, 100),
+     trendDir == 1 ? color.new(bullColorInput, 100) : color.new(bearColorInput, 60),
+     title = "Fill", display = showFillInput ? display.all : display.none)
+
+bgcolor(showStrengthBgInput ? color.new(bandColor, 92) : na, title = "TrendBg")
+
+plotshape(showSignalsInput and confirmedBuy  ? low  : na, "Long",  style = shape.labelup,   location = location.belowbar, color = bullColorInput, textcolor = LABEL_TEXT, text = "Long",  size = size.small)
+plotshape(showSignalsInput and confirmedSell ? high : na, "Short", style = shape.labeldown, location = location.abovebar, color = bearColorInput, textcolor = LABEL_TEXT, text = "Short", size = size.small)
+
+if showMLDebug and confirmedBuy
+    label.new(bar_index, low, str.tostring(mlScore, "#.0"), style = label.style_label_up, color = color.new(bullColorInput, 60), textcolor = LABEL_TEXT, size = size.tiny, yloc = yloc.belowbar)
+if showMLDebug and confirmedSell
+    label.new(bar_index, high, str.tostring(mlScore, "#.0"), style = label.style_label_down, color = color.new(bearColorInput, 60), textcolor = LABEL_TEXT, size = size.tiny, yloc = yloc.abovebar)
+
+plotshape(showMLRejected and mlRejectedBuy  ? low  : na, "MLRejBuy",  style = shape.triangleup,   location = location.belowbar, color = ML_REJECT_CLR, size = size.tiny)
+plotshape(showMLRejected and mlRejectedSell ? high : na, "MLRejSell", style = shape.triangledown, location = location.abovebar, color = ML_REJECT_CLR, size = size.tiny)
+
+plotshape(showDivergence and bullDivergence ? low  : na, "BullDiv", style = shape.circle, location = location.belowbar, color = DIV_BULL_CLR, size = size.tiny)
+plotshape(showDivergence and bearDivergence ? high : na, "BearDiv", style = shape.circle, location = location.abovebar, color = DIV_BEAR_CLR, size = size.tiny)
+
+var label regimeBadgeLabel = na
+if barstate.islast and showRegimeBadge and autoTuneInput
+    color regimeColor = regime == "TRENDING" ? REGIME_TREND : regime == "RANGING" ? REGIME_RANGE : REGIME_VOLAT
+    string rEmoji     = regime == "TRENDING" ? "📈" : regime == "RANGING" ? "📊" : "⚡"
+    if na(regimeBadgeLabel)
+        regimeBadgeLabel := label.new(bar_index + 3, stBand, rEmoji + " " + regime, style = label.style_label_left, color = color.new(regimeColor, 70), textcolor = regimeColor, size = size.small)
+    else
+        label.set_xy(regimeBadgeLabel, bar_index + 3, stBand)
+        label.set_text(regimeBadgeLabel, rEmoji + " " + regime)
+        label.set_color(regimeBadgeLabel, color.new(regimeColor, 70))
+        label.set_textcolor(regimeBadgeLabel, regimeColor)
+
+// ══════════════════════════════════════
+// DASHBOARD
+// ══════════════════════════════════════
+dashPos = switch dashPosStr
+    "Top Left"     => position.top_left
+    "Top Right"    => position.top_right
+    "Bottom Left"  => position.bottom_left
+    "Bottom Right" => position.bottom_right
+    => position.top_right
+
+if showDashInput and barstate.islast
+    var dashTable = table.new(dashPos, 2, 25, TABLE_BG, TABLE_BORDER, 1, TABLE_BORDER, 1)
+    int row = 0
+
+    table.cell(dashTable, 0, row, "StealthTrail ML Pro", text_color = HEADER_TEXT, bgcolor = HEADER_BG, text_size = dashHeaderSize, text_halign = text.align_center)
+    table.merge_cells(dashTable, 0, row, 1, row), row += 1
+
+    table.cell(dashTable, 0, row, "Trend", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, row, trendDir == 1 ? "Bullish" : "Bearish", text_color = trendDir == 1 ? bullColorInput : bearColorInput, text_size = dashSize, bgcolor = TABLE_BG), row += 1
+
+    color sigColor = lastSignal == "LONG" ? bullColorInput : lastSignal == "SHORT" ? bearColorInput : TEXT_MUTED
+    table.cell(dashTable, 0, row, "Signal", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 1, row, lastSignal != "—" ? lastSignal + " (" + str.tostring(barsSinceSignal) + ")" : "—", text_color = sigColor, text_size = dashSize, bgcolor = TABLE_ROW_ALT), row += 1
+
+    table.cell(dashTable, 0, row, "Strength", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, row, str.tostring(strengthVal) + " " + strengthStr, text_color = strengthColor, text_size = dashSize, bgcolor = TABLE_BG), row += 1
+
+    color adxColor = adxVal >= 25 ? bullColorInput : adxVal >= 15 ? MEDIUM_COLOR : TEXT_MUTED
+    table.cell(dashTable, 0, row, "ADX", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 1, row, str.tostring(adxVal, "#.0") + (adxVal >= 25 ? " Trend" : adxVal >= 15 ? " Weak" : " None"), text_color = adxColor, text_size = dashSize, bgcolor = TABLE_ROW_ALT), row += 1
+
+    if useMTF
+        string mtfStr  = (htfTrend == 1 ? "▲ Bull" : "▼ Bear") + " (" + htfTF + ")"
+        color mtfColor = mtfAligned ? bullColorInput : bearColorInput
+        table.cell(dashTable, 0, row, "HTF", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+        table.cell(dashTable, 1, row, mtfStr, text_color = mtfColor, text_size = dashSize, bgcolor = TABLE_BG), row += 1
+
+    // ML Section
+    table.cell(dashTable, 0, row, "🤖 ML Engine", text_color = HEADER_TEXT, bgcolor = ML_HEADER_BG, text_size = dashHeaderSize, text_halign = text.align_center)
+    table.merge_cells(dashTable, 0, row, 1, row), row += 1
+
+    color mlC = mlScore >= 70 ? bullColorInput : mlScore >= 50 ? MEDIUM_COLOR : bearColorInput
+    table.cell(dashTable, 0, row, "ML Score", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, row, str.tostring(mlScore, "#.0") + "/100", text_color = mlC, text_size = dashSize, bgcolor = TABLE_BG), row += 1
+
+    table.cell(dashTable, 0, row, "Gate", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 1, row, str.tostring(effectiveGate, "#.0") + (selfLearnInput ? " auto" : ""), text_color = TEXT_COLOR, text_size = dashSize, bgcolor = TABLE_ROW_ALT), row += 1
+
+    float winRate = totalSignals > 0 ? float(winSignals) / float(totalSignals) * 100 : 0.0
+    color wrC     = winRate >= 60 ? bullColorInput : winRate >= 45 ? MEDIUM_COLOR : bearColorInput
+    table.cell(dashTable, 0, row, "Win Rate", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, row, totalSignals >= 5 ? str.tostring(winRate, "#") + "% (" + str.tostring(totalSignals) + ")" : "...", text_color = totalSignals >= 5 ? wrC : TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG), row += 1
+
+    // TP/SL Section
+    if useTPSL
+        table.cell(dashTable, 0, row, "🎯 Position", text_color = HEADER_TEXT, bgcolor = TPSL_HEADER_BG, text_size = dashHeaderSize, text_halign = text.align_center)
+        table.merge_cells(dashTable, 0, row, 1, row), row += 1
+
+        string posStr = posDir == 1 ? "LONG" : posDir == -1 ? "SHORT" : "FLAT"
+        color posClr  = posDir == 1 ? bullColorInput : posDir == -1 ? bearColorInput : TEXT_MUTED
+        table.cell(dashTable, 0, row, "Status", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+        table.cell(dashTable, 1, row, posStr, text_color = posClr, text_size = dashSize, bgcolor = TABLE_BG), row += 1
+
+        if posDir != 0
+            table.cell(dashTable, 0, row, "Entry", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_ROW_ALT)
+            table.cell(dashTable, 1, row, str.tostring(entryPrice, format.mintick), text_color = TEXT_COLOR, text_size = dashSize, bgcolor = TABLE_ROW_ALT), row += 1
+
+            string trailTag = useTrailing ? (trailMode == "ATR → Band" ? " ⟲" : trailMode == "Band" ? " ◆" : " ◄") : ""
+            table.cell(dashTable, 0, row, "SL", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+            table.cell(dashTable, 1, row, str.tostring(slPrice, format.mintick) + trailTag, text_color = bearColorInput, text_size = dashSize, bgcolor = TABLE_BG), row += 1
+
+            string tpStr = (tp1Hit ? "✓" : str.tostring(tp1Price, format.mintick))
+            if tpLevels >= 2
+                tpStr += " | " + (tp2Hit ? "✓" : str.tostring(tp2Price, format.mintick))
+            if tpLevels >= 3
+                tpStr += " | " + (tp3Hit ? "✓" : str.tostring(tp3Price, format.mintick))
+            table.cell(dashTable, 0, row, "TP", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_ROW_ALT)
+            table.cell(dashTable, 1, row, tpStr, text_color = bullColorInput, text_size = dashSize, bgcolor = TABLE_ROW_ALT), row += 1
+
+            // R:R (based on initial SL, not trailing)
+            float risk   = math.abs(entryPrice - entrySL)
+            float reward = math.abs(tp1Price - entryPrice)
+            float rr     = risk > 0 ? reward / risk : 0.0
+            color rrClr  = rr >= 2.0 ? bullColorInput : rr >= 1.0 ? MEDIUM_COLOR : bearColorInput
+            table.cell(dashTable, 0, row, "R:R", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+            table.cell(dashTable, 1, row, "1:" + str.tostring(rr, "#.#"), text_color = rrClr, text_size = dashSize, bgcolor = TABLE_BG), row += 1
+
+    // Regime
+    if showProfileInput and autoTuneInput
+        table.cell(dashTable, 0, row, "🧠 Regime", text_color = HEADER_TEXT, bgcolor = color.new(#6200EA, 0), text_size = dashHeaderSize, text_halign = text.align_center)
+        table.merge_cells(dashTable, 0, row, 1, row), row += 1
+        color regColor = regime == "TRENDING" ? REGIME_TREND : regime == "RANGING" ? REGIME_RANGE : REGIME_VOLAT
+        table.cell(dashTable, 0, row, "Mode", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+        table.cell(dashTable, 1, row, regime + " " + str.tostring(regimeConfidence, "#") + "%", text_color = regColor, text_size = dashSize, bgcolor = TABLE_BG), row += 1
+
+    table.cell(dashTable, 0, row, "TF", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_ROW_ALT)
+    table.cell(dashTable, 1, row, timeframe.period, text_color = TEXT_COLOR, text_size = dashSize, bgcolor = TABLE_ROW_ALT), row += 1
+
+    table.cell(dashTable, 0, row, "Ver", text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+    table.cell(dashTable, 1, row, INDICATOR_VERSION, text_color = TEXT_MUTED, text_size = dashSize, bgcolor = TABLE_BG)
+
+// ══════════════════════════════════════
+// WATERMARK
+// ══════════════════════════════════════
+if barstate.islast and showWatermarkInput
+    var wmTable = table.new(position = position.bottom_center, columns = 1, rows = 1, bgcolor = color.new(color.black, 100), border_color = color.new(color.black, 100), border_width = 0, frame_color = color.new(color.black, 100), frame_width = 0)
+    table.cell(wmTable, 0, 0, "WillyAlgoTrader", text_color = WM_COLOR, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(color.black, 100))
+
+// ══════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════
+string ticker   = syminfo.tickerid
+string priceStr = str.tostring(close, format.mintick)
+string bandStr  = na(stBand) ? "0" : str.tostring(stBand, format.mintick)
+string mlStr    = str.tostring(mlScore, "#.0")
+string htfStr   = htfTrend == 1 ? "bull" : "bear"
+
+// Entry alerts
+string buyJ  = '{"action":"long","ticker":"'  + ticker + '","price":' + priceStr + ',"tf":"' + timeframe.period + '","band":' + bandStr + ',"ml":' + mlStr + ',"adx":' + str.tostring(adxVal, "#.0") + ',"htf":"' + htfStr + '","sl":' + (na(slPrice) ? "0" : str.tostring(slPrice, format.mintick)) + ',"tp1":' + (na(tp1Price) ? "0" : str.tostring(tp1Price, format.mintick)) + ',"regime":"' + regime + '"}'
+string buyT  = "🟢 LONG | "  + ticker + " | " + timeframe.period + " | $" + priceStr + " | ML:" + mlStr + " | SL:" + (na(slPrice) ? "—" : str.tostring(slPrice, format.mintick))
+
+string sellJ = '{"action":"short","ticker":"' + ticker + '","price":' + priceStr + ',"tf":"' + timeframe.period + '","band":' + bandStr + ',"ml":' + mlStr + ',"adx":' + str.tostring(adxVal, "#.0") + ',"htf":"' + htfStr + '","sl":' + (na(slPrice) ? "0" : str.tostring(slPrice, format.mintick)) + ',"tp1":' + (na(tp1Price) ? "0" : str.tostring(tp1Price, format.mintick)) + ',"regime":"' + regime + '"}'
+string sellT = "🔴 SHORT | " + ticker + " | " + timeframe.period + " | $" + priceStr + " | ML:" + mlStr + " | SL:" + (na(slPrice) ? "—" : str.tostring(slPrice, format.mintick))
+
+if confirmedBuy
+    alert(webhookInput ? buyJ : buyT, alert.freq_once_per_bar_close)
+if confirmedSell
+    alert(webhookInput ? sellJ : sellT, alert.freq_once_per_bar_close)
+
+// TP/SL event alerts
+if useTPSL and tp1Hit and not tp1Hit[1]
+    string tp1Msg = webhookInput ? '{"action":"tp1","ticker":"' + ticker + '","price":' + priceStr + '}' : "🎯 TP1 HIT | " + ticker + " | $" + priceStr
+    alert(tp1Msg, alert.freq_once_per_bar_close)
+if useTPSL and tp2Hit and not tp2Hit[1]
+    string tp2Msg = webhookInput ? '{"action":"tp2","ticker":"' + ticker + '","price":' + priceStr + '}' : "🎯 TP2 HIT | " + ticker + " | $" + priceStr
+    alert(tp2Msg, alert.freq_once_per_bar_close)
+if useTPSL and posJustClosed and exitReason == "TP3"
+    string tp3Msg = webhookInput ? '{"action":"tp3","ticker":"' + ticker + '","price":' + priceStr + '}' : "🎯 TP3 HIT | " + ticker + " | $" + priceStr
+    alert(tp3Msg, alert.freq_once_per_bar_close)
+if useTPSL and posJustClosed and exitReason == "SL"
+    string slMsg = webhookInput ? '{"action":"sl","ticker":"' + ticker + '","price":' + priceStr + '}' : "🛑 SL HIT | " + ticker + " | $" + priceStr
+    alert(slMsg, alert.freq_once_per_bar_close)
