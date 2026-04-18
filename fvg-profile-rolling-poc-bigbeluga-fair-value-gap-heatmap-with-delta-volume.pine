@@ -1,0 +1,190 @@
+// This work is licensed under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International  
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// © BigBeluga
+
+//@version=6
+indicator("Fair Value Gap Profile + Rolling POC [BigBeluga]", "FVG Profile + POC [Bigbeluga]", overlay = true, max_boxes_count = 500, max_bars_back = 5000, calc_bars_count = 5000)
+
+// ＩＮＰＵＴＳ ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――{
+
+period     = input.int(500, "Lookback Period", tooltip = "The number of bars back from the current price to analyze for Fair Value Gaps.")
+binSize    = input.int(40, "Profile Resolution (Bins)", tooltip = "The number of rows (price levels) the profile is divided into. Higher values create a more detailed but narrower profile.")
+offset     = input.int(10, "Horizontal Offset", tooltip = "Moves the profile further to the right of the current bar to avoid overlapping price action.")
+
+displayFVG = input.bool(true, "Show Fair Value Gaps", tooltip = "When enabled, highlights individual FVG boxes directly on the price chart.")
+displayPer = input.bool(true, "Show Strength Percentage", tooltip = "Displays the percentage of total gap activity for each price bin.")
+showPOC     = input.bool(true, "Show Rolling POC Line", tooltip = "Draws a line tracking the price level with the most FVG activity.")
+
+DisplayDelta = input.bool(true, "Show Delta Volume", tooltip = "Shows the net volume difference between bullish and bearish gaps at that level.")
+Displayqty   = input.bool(true, "Show Bull / Bear FVG Count", tooltip = "Displays the total count of bullish (▲) and bearish (▼) gaps found in each bin.")
+heatMap      = input.bool(false, "Enable Heatmap", tooltip = "Overlays a color gradient on the background based on the density of gap activity.", inline = "hm")
+
+bullCol = input.color(color.lime, "Bullish/Bearish Color", tooltip = "Color used for bullish gaps and positive volume delta.", inline = "col")
+bearCol = input.color(color.orange, "", tooltip = "Color used for bearish gaps and negative volume delta.", inline = "col")
+bgColor = input.color(color.rgb(73, 73, 73, 80), "Background Colorㅤㅤ", tooltip = "The background color of the profile area.", inline = "col1")
+
+pocCol  = input.color(color.rgb(255, 102, 0), "POC Color", tooltip = "The color of the Rolling Point of Control line.")
+
+topBot  = array.new<float>()
+colorNA = color.new(color.black, 100)
+// }
+
+// ＲＯＬＬＩＮＧ ＰＯＣ ＬＯＧＩＣ ―――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――{
+
+// We need a way to find the POC on every bar for the 'Rolling' effect
+// This function finds which bin the current FVG falls into based on the global high/low range
+get_poc() =>
+    float hi = ta.highest(high, period)
+    float lo = ta.lowest(low, period)
+    float stp = (hi - lo) / binSize
+    
+    array<int>   counts = array.new<int>(binSize, 0)
+    float pocPrice = na
+    
+    for i = 0 to period - 1
+        // Bull FVG Logic
+        if high[i+2] < low[i]
+            avg = math.avg(high[i+2], low[i])
+            binIdx = math.floor((avg - lo) / stp)
+            if binIdx >= 0 and binIdx < binSize
+                counts.set(binIdx, counts.get(binIdx) + 1)
+        
+        // Bear FVG Logic
+        if low[i+2] > high[i]
+            avg = math.avg(low[i+2], high[i])
+            binIdx = math.floor((avg - lo) / stp)
+            if binIdx >= 0 and binIdx < binSize
+                counts.set(binIdx, counts.get(binIdx) + 1)
+    
+    // Find index of max activity
+    maxAct = counts.max()
+    if maxAct > 0
+        pocIdx = counts.indexof(maxAct)
+        pocPrice := lo + (stp * pocIdx) + (stp / 2)
+    pocPrice
+
+rollingPoc = showPOC ? get_poc() : na
+poc = ta.sma(rollingPoc, 10)
+plot(poc, "Rolling POC", color = pocCol, linewidth = 2, show_last = period, style = plot.style_linebr)
+if barstate.islast and showPOC
+    label.delete(label.new(bar_index, poc, "< PoC", style = label.style_label_left, color = colorNA, textcolor = pocCol)[1])
+
+// }
+
+// ＣＡＬＣＵＬＡＴＩＯＮＳ (Static Profile for Last Bar) ――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――――{
+
+if barstate.islast
+    var boxes = array.new<box>()
+    for b in boxes 
+        b.delete()
+    boxes.clear()
+
+    for i = 0 to period - 1
+        topBot.push(high[i])
+        topBot.push(low[i])
+
+    step = (topBot.max() - topBot.min()) / binSize
+    bullGaps = array.new<int>(binSize, 0)
+    bearGaps = array.new<int>(binSize, 0)
+    bullVol  = array.new<float>(binSize, 0.)
+    bearVol  = array.new<float>(binSize, 0.)
+
+    for i = 0 to period - 1
+        avgBull = math.avg(high[i+2], low[i])
+        avgBear = math.avg(low[i+2], high[i])
+
+        if high[i+2] < low[i] // bullFVG 
+            if displayFVG
+                boxes.push(box.new(bar_index[i]-2, high[i+2], bar_index[i]+1, low[i], color.new(bullCol, 10), 1, bgcolor = color.new(bullCol, 80)))
+
+            for k = 0 to binSize - 1 
+                L = topBot.min() + step * k + step / 2
+                if math.abs(avgBull - L) < step / 2
+                    bullGaps.set(k, bullGaps.get(k) + 1)
+                    bullVol.set(k, bullVol.get(k) + volume[i+1])
+
+        if low[i+2] > high[i] // bearFVG 
+            if displayFVG
+                boxes.push(box.new(bar_index[i]-2, low[i+2], bar_index[i]+1, high[i], color.new(bearCol, 10), 1, bgcolor = color.new(bearCol, 80)))
+
+            for k = 0 to binSize - 1 
+                L = topBot.min() + step * k + step / 2
+                if math.abs(avgBear - L) < step / 2
+                    bearGaps.set(k, bearGaps.get(k) + 1)
+                    bearVol.set(k, bearVol.get(k) + volume[i+1])
+
+    max_ = 0.
+    for k = 0 to binSize - 1 
+        delta = bullVol.get(k) - bearVol.get(k)
+        max_ := math.max(math.abs(delta), max_)
+
+    // ＰＬＯＴ Profile Bars
+    for k = 0 to binSize - 1 
+        L = topBot.min() + step * k 
+        H = L + step
+        bullFVG_w = int(bullGaps.get(k) / math.max(1, bullGaps.max()) * 25) 
+        bearFVG_w = int(bearGaps.get(k) / math.max(1, bearGaps.max()) * 25) 
+        
+        max_act = bullGaps.max() + bearGaps.max()
+        tot = (bullGaps.get(k) + bearGaps.get(k)) / math.max(1, max_act) * 100
+        delta = bullVol.get(k) - bearVol.get(k)
+
+        if bullGaps.get(k) != 0 or bearGaps.get(k) != 0
+            if heatMap
+                boxes.push(box.new(bar_index-period, H, bar_index+50+offset, L, bgcolor = color.from_gradient(tot, 0, 100, colorNA, color.new(chart.fg_color, 50)), border_color = colorNA))
+
+            boxes.push(box.new(bar_index+50+offset, H, bar_index+50+offset-bullFVG_w, L, bgcolor = bullCol, border_color = chart.bg_color, text = Displayqty ?  "▲" + str.tostring(bullGaps.get(k)) : ""))
+            boxes.push(box.new(bar_index+50+offset-bullFVG_w, H, bar_index+50+offset-bullFVG_w-bearFVG_w, L, bgcolor = bearCol, border_color = chart.bg_color, text = Displayqty ? "▼" + str.tostring(bearGaps.get(k)) : ""))
+
+            if displayPer
+                boxes.push(box.new(bar_index+ 50 + offset, H, bar_index+ 60 + offset, L, colorNA, 0, bgcolor = colorNA, text =  str.tostring(tot, format.percent) + " |", text_halign = text.align_left, text_color = delta > 0 ? bullCol : bearCol))
+            
+            if DisplayDelta
+                boxes.push(box.new(bar_index+ (displayPer ? 60 : 50) + offset, H, bar_index+ (displayPer ? 75 : 60) + offset, L, colorNA, 0, bgcolor = colorNA, text =  "Δ " + str.tostring(delta, format.volume), text_halign = text.align_left, text_color = delta > 0 ? bullCol : bearCol))
+
+    boxes.push(box.new(bar_index-period, topBot.max(), bar_index+50+offset, topBot.min(), colorNA, 0, bgcolor = bgColor))
+
+    line.delete(line.new(bar_index+50+offset, topBot.max(), bar_index+50+offset, topBot.min(), color = chart.fg_color)[1])
+
+// }
+
+// Smoothing MA inputs
+var length = 2
+
+if bar_index == last_bar_index - period 
+    length := 2
+
+length += 1
+
+
+GRP = "Moving Average"
+maTypeInput = input.string("None", "Type", options = ["None", "SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], group = GRP, display = display.none)
+maLengthInput = input.int(25, "Length", group = GRP, display = display.none, inline = "len")
+autoLength = input.bool(false, "Auto", group = GRP, display = display.none, inline = "len")
+src = input(close, title="Source", group = GRP)
+
+pine_ema(src, length) =>
+    alpha = 2 / (length + 1)
+    sum = 0.0
+    sum := na(sum[1]) ? src : alpha * src + (1 - alpha) * nz(sum[1])
+
+pine_rma(src, length) =>
+    alpha = 1/length
+    sum = 0.0
+    sum := na(sum[1]) ? ta.sma(src, length) : alpha * src + (1 - alpha) * nz(sum[1])
+
+// Smoothing MA Calculation
+ma(source, length, MAtype) =>
+    switch MAtype
+        "SMA"                   => ta.sma(source, length)
+        "EMA"                   => pine_ema(source, length)
+        "SMMA (RMA)"            => pine_rma(source, length)
+        "WMA"                   => ta.wma(source, length)
+        "VWMA"                  => ta.vwma(source, length)
+ma = ma(src, autoLength ? length : maLengthInput, maTypeInput)
+plot(ma, color=color.yellow, title="MA", show_last = period, style = plot.style_linebr)
+
+if barstate.islast and maTypeInput != "None"
+    label.delete(label.new(bar_index, ma, maTypeInput + ": " + str.tostring(autoLength ? length : maLengthInput), style = label.style_label_left, color = colorNA, textcolor = color.yellow)[1])
+
+// }
